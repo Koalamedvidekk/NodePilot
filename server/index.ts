@@ -1,5 +1,3 @@
-import 'dotenv/config';
-
 import { createWriteStream } from 'node:fs';
 import { access, rm } from 'node:fs/promises';
 import net from 'node:net';
@@ -14,7 +12,9 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { getConfig, updateEnvFile } from './config.js';
+import { getConfig, loadEnv, updateEnvFile } from './config.js';
+loadEnv();
+
 import { openDatabase } from './db.js';
 import { AppError, asAppError, errorMessage } from './lib/errors.js';
 import { formatAccessUrls, getLocalNetworkAddresses, isAllowedOrigin } from './lib/network.js';
@@ -34,6 +34,7 @@ import { SystemService } from './services/system-service.js';
 import type { ProvisionableServerSoftware, ServerRecord, ServerStatus } from './types.js';
 
 let config = getConfig();
+let currentListeningHost = config.host;
 const idSchema = z.string().uuid();
 const flavorSchema = z.enum(['vanilla', 'paper']);
 const softwareSchema = z.enum(['vanilla', 'paper', 'spigot', 'purpur', 'fabric', 'forge', 'neoforge', 'quilt']);
@@ -766,8 +767,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.get('/api/network', async () => {
+    config = getConfig();
     const addresses = getLocalNetworkAddresses();
     const accessUrls = formatAccessUrls(config.host, config.port, addresses);
+    const hostChanged = config.host !== currentListeningHost;
     return {
       host: config.host,
       port: config.port,
@@ -775,6 +778,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       addresses,
       accessUrls,
       hasPin: Boolean(config.pin),
+      activeHost: currentListeningHost,
+      requiresRestart: hostChanged,
     };
   });
 
@@ -785,11 +790,19 @@ export async function buildApp(): Promise<FastifyInstance> {
       NODEPILOT_HOST: input.host,
       ...(pin !== undefined ? { NODEPILOT_PIN: pin } : {}),
     });
+
+    config = getConfig();
+    const hostChanged = input.host !== currentListeningHost;
+
     return {
       ok: true,
-      requiresRestart: true,
-      host: input.host,
-      message: 'Network configuration saved to .env. Restart NodePilot for changes to take effect.',
+      requiresRestart: hostChanged,
+      host: config.host,
+      isNetworkVisible: config.isNetworkVisible,
+      hasPin: Boolean(config.pin),
+      message: hostChanged
+        ? `Network mode saved to .env! To bind to ${input.host}, restart NodePilot in terminal (Ctrl+C, then npm start).`
+        : 'Network settings updated successfully!',
     };
   });
 
@@ -871,6 +884,7 @@ if (await shouldRunFirstTimeSetup()) {
 
 const app = await buildApp();
 try {
+  currentListeningHost = config.host;
   await app.listen({ host: config.host, port: config.port });
   const addresses = getLocalNetworkAddresses();
   console.log('\n============================================================');

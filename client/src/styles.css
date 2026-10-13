@@ -65,6 +65,7 @@ svg { display: block; flex: 0 0 auto; }
 .local-host-card.is-clickable:hover { background: rgba(255, 255, 255, .05); border-color: var(--line); }
 .host-pulse, .connection-indicator > span, .live-chip > span, .local-pill > span, .console-connection > span { width: 8px; height: 8px; display: inline-block; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(78,225,164,.12); }
 .host-pulse.is-lan, .connection-indicator.is-lan > span { background: #53d8ff; box-shadow: 0 0 0 4px rgba(83, 216, 255, .18); }
+.host-pulse.is-warning, .connection-indicator.is-warning > span { background: #ffcf6c; box-shadow: 0 0 0 4px rgba(255, 209, 106, .2); }
 .topbar-title h1 { margin: 1px 0 0; font-size: 17px; letter-spacing: -.025em; }
 .topbar-status { color: var(--muted); font-size: 12px; font-weight: 650; }
 .connection-indicator, .local-pill, .live-chip, .console-connection { display: inline-flex; align-items: center; gap: 8px; }
@@ -73,6 +74,8 @@ svg { display: block; flex: 0 0 auto; }
 .connection-indicator.is-button:hover { background: rgba(255, 255, 255, .06); border-color: var(--line-strong); color: var(--text); }
 .connection-indicator.is-lan { color: #53d8ff; border-color: rgba(83, 216, 255, .28); background: rgba(83, 216, 255, .06); }
 .connection-indicator.is-lan:hover { background: rgba(83, 216, 255, .12); border-color: rgba(83, 216, 255, .45); }
+.connection-indicator.is-warning { color: #ffcf6c; border-color: rgba(255, 209, 106, .35); background: rgba(255, 209, 106, .09); }
+.connection-indicator.is-warning:hover { background: rgba(255, 209, 106, .16); border-color: rgba(255, 209, 106, .55); }
 
 .page-enter { animation: page-in .3s ease-out both; }
 @keyframes page-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }

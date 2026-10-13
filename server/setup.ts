@@ -2,7 +2,8 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 
-import { projectDirectory, updateEnvFile } from './config.js';
+import { loadEnv, projectDirectory, updateEnvFile } from './config.js';
+loadEnv();
 import { getLocalNetworkAddresses } from './lib/network.js';
 
 function askQuestion(rl: readline.Interface, prompt: string): Promise<string> {
@@ -88,7 +89,10 @@ export async function shouldRunFirstTimeSetup(): Promise<boolean> {
   }
 }
 
-// If executed directly: `node dist/setup.js` or `tsx server/setup.ts`
-if (process.argv[1]?.replace(/\\/g, '/').endsWith('server/setup.ts') || process.argv[1]?.replace(/\\/g, '/').endsWith('server/dist/setup.js')) {
+// If executed directly: `npm run setup`, `tsx setup.ts`, or `node dist/setup.js`
+if (
+  process.argv[1]?.replace(/\\/g, '/').endsWith('setup.ts') ||
+  process.argv[1]?.replace(/\\/g, '/').endsWith('setup.js')
+) {
   void runInteractiveSetup();
 }

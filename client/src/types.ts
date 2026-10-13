@@ -367,6 +367,8 @@ export interface NetworkInfo {
   addresses: string[];
   accessUrls: { local: string; network: string[] };
   hasPin: boolean;
+  activeHost?: string;
+  requiresRestart?: boolean;
 }
 
 export interface UpdateNetworkInput {

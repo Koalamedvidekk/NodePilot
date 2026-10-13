@@ -84,29 +84,45 @@ export function NetworkModal({ network, onClose, onRefresh }: NetworkModalProps)
                 <p>
                   {network.isNetworkVisible
                     ? 'NodePilot is accessible from other computers, laptops, and phones on your Wi-Fi.'
-                    : 'NodePilot is only accessible from this computer (127.0.0.1).'}
+                    : 'NodePilot is currently configured for this computer only (127.0.0.1).'}
                 </p>
               </div>
             </div>
 
+            {/* Restart required notice */}
+            {network.requiresRestart && (
+              <div className="inline-alert alert-error" role="alert">
+                <Icon name="warning" size={16} />
+                <div>
+                  <strong>Terminal Restart Required</strong>
+                  <span>
+                    Network mode changed in <code>.env</code> ({network.host}). Please stop NodePilot in your terminal (press <strong>Ctrl+C</strong>) and run <code>npm start</code> to activate the new host binding.
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Remote URLs if available */}
-            {network.accessUrls.network.length > 0 && (
+            {network.addresses.length > 0 && (network.isNetworkVisible || mode === '0.0.0.0') && (
               <div className="network-links-section">
                 <span className="field-label">Remote Control URLs (Open on main laptop/PC):</span>
                 <div className="network-urls-list">
-                  {network.accessUrls.network.map((url) => (
-                    <div className="network-url-card" key={url}>
-                      <code>{url}</code>
-                      <button
-                        type="button"
-                        className="button button-secondary button-sm"
-                        onClick={() => void copyToClipboard(url)}
-                      >
-                        <Icon name={copiedUrl === url ? 'check' : 'copy'} size={14} />
-                        {copiedUrl === url ? 'Copied!' : 'Copy Link'}
-                      </button>
-                    </div>
-                  ))}
+                  {network.addresses.map((ip) => {
+                    const url = `http://${ip}:${network.port}`;
+                    return (
+                      <div className="network-url-card" key={url}>
+                        <code>{url}</code>
+                        <button
+                          type="button"
+                          className="button button-secondary button-sm"
+                          onClick={() => void copyToClipboard(url)}
+                        >
+                          <Icon name={copiedUrl === url ? 'check' : 'copy'} size={14} />
+                          {copiedUrl === url ? 'Copied!' : 'Copy Link'}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
                 <p className="network-hint">
                   💡 Connect your main laptop to the same Wi-Fi and open this URL in any browser.

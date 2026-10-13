@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -18,6 +20,29 @@ export function projectDirectory(): string {
   return path.dirname(serverDirectory);
 }
 
+export function loadEnv(): void {
+  const projectRoot = projectDirectory();
+  const rootEnv = path.join(projectRoot, '.env');
+  const serverEnv = path.join(projectRoot, 'server', '.env');
+  const cwdEnv = path.resolve(process.cwd(), '.env');
+
+  // Load from root .env first
+  if (existsSync(rootEnv)) {
+    dotenv.config({ path: rootEnv, override: true });
+  }
+  // Load from server/.env if it exists
+  if (existsSync(serverEnv)) {
+    dotenv.config({ path: serverEnv, override: true });
+  }
+  // Load from cwd .env if different
+  if (existsSync(cwdEnv) && cwdEnv !== rootEnv && cwdEnv !== serverEnv) {
+    dotenv.config({ path: cwdEnv, override: true });
+  }
+}
+
+// Ensure environment variables are loaded immediately upon module import
+loadEnv();
+
 export interface NodePilotConfig {
   host: string;
   port: number;
@@ -33,6 +58,7 @@ export interface NodePilotConfig {
 }
 
 export function getConfig(): NodePilotConfig {
+  loadEnv();
   const projectRoot = projectDirectory();
   const dataDirectory = path.resolve(
     process.env.NODEPILOT_DATA_DIR ?? path.join(projectRoot, '.nodepilot'),
@@ -61,6 +87,7 @@ export function getConfig(): NodePilotConfig {
 export async function updateEnvFile(updates: Record<string, string | null>): Promise<void> {
   const projectRoot = projectDirectory();
   const envPath = path.join(projectRoot, '.env');
+  const serverEnvPath = path.join(projectRoot, 'server', '.env');
   let content = '';
 
   try {
@@ -98,6 +125,23 @@ export async function updateEnvFile(updates: Record<string, string | null>): Pro
     }
   }
 
-  await writeFile(envPath, newLines.join('\n') + '\n', 'utf8');
+  const finalContent = newLines.join('\n') + '\n';
+  await writeFile(envPath, finalContent, 'utf8');
+
+  // Keep server/.env synchronized as well so child workspace execution sees it
+  try {
+    await writeFile(serverEnvPath, finalContent, 'utf8');
+  } catch {
+    // Ignore if server directory isn't writable
+  }
+
+  // Update in-memory process.env immediately
+  for (const [key, val] of Object.entries(updates)) {
+    if (val === null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = val;
+    }
+  }
 }
 

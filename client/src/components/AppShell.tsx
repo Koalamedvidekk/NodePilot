@@ -113,16 +113,18 @@ export function AppShell({ children }: { children: ReactNode }) {
             onClick={() => setNetworkModalOpen(true)}
             title="Click to view network and remote control settings"
           >
-            <span className={`host-pulse ${network?.isNetworkVisible ? 'is-lan' : ''}`} />
+            <span className={`host-pulse ${network?.requiresRestart ? 'is-warning' : (network?.isNetworkVisible ? 'is-lan' : '')}`} />
             <div>
-              <strong>{network?.isNetworkVisible ? 'LAN host' : 'Local host'}</strong>
+              <strong>{network?.requiresRestart ? 'Restart needed' : (network?.isNetworkVisible ? 'LAN host' : 'Local host')}</strong>
               <span>{displayIp}:{network?.port ?? 7420}</span>
             </div>
           </button>
           <p>
-            {network?.isNetworkVisible
-              ? 'Visible on local network. Click to manage.'
-              : 'Local PC only. Click to make visible on LAN.'}
+            {network?.requiresRestart
+              ? 'Restart in terminal (npm start) to apply.'
+              : (network?.isNetworkVisible
+                ? 'Visible on local network. Click to manage.'
+                : 'Local PC only. Click to make visible on LAN.')}
           </p>
         </div>
       </aside>
@@ -141,12 +143,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="topbar-status">
             <button
               type="button"
-              className={`connection-indicator is-button ${network?.isNetworkVisible ? 'is-lan' : ''}`}
+              className={`connection-indicator is-button ${network?.requiresRestart ? 'is-warning' : (network?.isNetworkVisible ? 'is-lan' : '')}`}
               onClick={() => setNetworkModalOpen(true)}
-              title="Click to view network access URLs"
+              title={network?.requiresRestart ? 'Restart in terminal (npm start) to apply changes' : 'Click to view network access URLs'}
             >
-              {network?.isNetworkVisible ? <Icon name="wifi" size={13} /> : <span />}
-              {network?.isNetworkVisible ? 'LAN mode' : 'Local mode'}
+              {network?.requiresRestart ? <Icon name="warning" size={13} /> : (network?.isNetworkVisible ? <Icon name="wifi" size={13} /> : <span />)}
+              {network?.requiresRestart ? 'Restart needed' : (network?.isNetworkVisible ? 'LAN mode' : 'Local mode')}
             </button>
           </div>
         </header>
