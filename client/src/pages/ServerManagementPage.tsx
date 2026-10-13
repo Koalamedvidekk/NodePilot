@@ -230,6 +230,26 @@ function PropertiesPanel({ serverId }: { serverId: string }) {
   );
 }
 
+const PROTECTED_FILENAMES = new Set(['server.jar', 'eula.txt']);
+
+function isProtectedFile(filename: string): boolean {
+  return PROTECTED_FILENAMES.has(filename.toLowerCase());
+}
+
+type FileClipboard = {
+  action: 'copy' | 'cut';
+  path: string;
+  name: string;
+  type: 'file' | 'directory';
+};
+
+type FileModalState =
+  | { type: 'new-file'; parentPath: string }
+  | { type: 'new-folder'; parentPath: string }
+  | { type: 'rename'; file: FileEntry }
+  | { type: 'delete'; file: FileEntry }
+  | null;
+
 function FilesPanel({ serverId }: { serverId: string }) {
   const [path, setPath] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -239,6 +259,12 @@ function FilesPanel({ serverId }: { serverId: string }) {
   const [loadingContent, setLoadingContent] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [clipboard, setClipboard] = useState<FileClipboard | null>(null);
+  const [activeModal, setActiveModal] = useState<FileModalState>(null);
+  const [modalInput, setModalInput] = useState('');
+  const [modalError, setModalError] = useState<string>();
+  const [modalBusy, setModalBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -255,6 +281,16 @@ function FilesPanel({ serverId }: { serverId: string }) {
   }, [path, serverId]);
 
   useEffect(() => { void loadFiles(); }, [loadFiles]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && activeModal && !modalBusy) {
+        closeModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeModal, modalBusy]);
 
   const openFile = async (file: FileEntry) => {
     if (file.type === 'directory') {
@@ -295,30 +331,351 @@ function FilesPanel({ serverId }: { serverId: string }) {
     }
   };
 
+  const openModal = (modal: FileModalState) => {
+    setActiveModal(modal);
+    if (modal?.type === 'rename') {
+      setModalInput(modal.file.name);
+    } else {
+      setModalInput('');
+    }
+    setModalError(undefined);
+  };
+
+  const closeModal = () => {
+    setActiveModal(null);
+    setModalInput('');
+    setModalError(undefined);
+  };
+
+  const copyItem = (file: FileEntry) => {
+    setClipboard({ action: 'copy', path: file.path, name: file.name, type: file.type });
+  };
+
+  const cutItem = (file: FileEntry) => {
+    setClipboard({ action: 'cut', path: file.path, name: file.name, type: file.type });
+  };
+
+  const clearClipboard = () => {
+    setClipboard(null);
+  };
+
+  const pasteItem = async () => {
+    if (!clipboard || actionBusy) return;
+    setActionBusy(true);
+    setError(undefined);
+    try {
+      if (clipboard.action === 'copy') {
+        await api.copyFile(serverId, clipboard.path, path);
+      } else {
+        await api.moveFile(serverId, clipboard.path, path);
+        setClipboard(null);
+      }
+      await loadFiles();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleModalSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!activeModal || modalBusy) return;
+    const trimmed = modalInput.trim();
+    if (activeModal.type !== 'delete' && !trimmed) {
+      setModalError('Please enter a valid name.');
+      return;
+    }
+    setModalBusy(true);
+    setModalError(undefined);
+    try {
+      if (activeModal.type === 'new-file') {
+        const created = await api.createFile(serverId, activeModal.parentPath, trimmed);
+        closeModal();
+        await loadFiles();
+        void openFile({
+          name: trimmed,
+          path: created.path,
+          type: 'file',
+        });
+      } else if (activeModal.type === 'new-folder') {
+        await api.createFolder(serverId, activeModal.parentPath, trimmed);
+        closeModal();
+        await loadFiles();
+      } else if (activeModal.type === 'rename') {
+        const renamed = await api.renameFile(serverId, activeModal.file.path, trimmed);
+        if (selected && selected.path === activeModal.file.path) {
+          setSelected({ path: renamed.path, content: selected.content });
+        }
+        if (clipboard && clipboard.path === activeModal.file.path) {
+          setClipboard({ ...clipboard, path: renamed.path, name: trimmed });
+        }
+        closeModal();
+        await loadFiles();
+      } else if (activeModal.type === 'delete') {
+        await api.deleteFile(serverId, activeModal.file.path);
+        if (selected && (selected.path === activeModal.file.path || selected.path.startsWith(`${activeModal.file.path}/`))) {
+          setSelected(undefined);
+        }
+        if (clipboard && (clipboard.path === activeModal.file.path || clipboard.path.startsWith(`${activeModal.file.path}/`))) {
+          setClipboard(null);
+        }
+        closeModal();
+        await loadFiles();
+      }
+    } catch (cause) {
+      setModalError(errorMessage(cause));
+    } finally {
+      setModalBusy(false);
+    }
+  };
+
   const crumbs = relativePath(path);
   const goToCrumb = (index: number) => setPath(crumbs.slice(0, index + 1).join('/'));
   const parentPath = crumbs.slice(0, -1).join('/');
 
   return (
     <section className="management-panel file-manager panel">
-      <div className="panel-heading file-heading"><div><h3>Server files</h3><p>Browse and edit text files within this server’s protected directory.</p></div><button className="button button-secondary button-icon" onClick={() => void loadFiles()} disabled={loading}><Icon name="refresh" size={16} /> Refresh</button></div>
-      {error && <div className="inline-alert alert-error" role="alert"><Icon name="warning" size={18} /><div><strong>File action failed.</strong><span>{error}</span></div></div>}
+      <div className="panel-heading file-heading">
+        <div>
+          <h3>Server files</h3>
+          <p>Browse, manage, and edit text files within this server’s protected directory.</p>
+        </div>
+        <button className="button button-secondary button-icon" onClick={() => void loadFiles()} disabled={loading}>
+          <Icon name="refresh" size={16} /> Refresh
+        </button>
+      </div>
+      {error && (
+        <div className="inline-alert alert-error" role="alert">
+          <Icon name="warning" size={18} />
+          <div><strong>File action failed.</strong><span>{error}</span></div>
+        </div>
+      )}
       <div className="file-manager-grid">
         <div className="file-browser">
-          <div className="breadcrumbs"><button type="button" onClick={() => setPath('')} className={!path ? 'is-current' : ''}>root</button>{crumbs.map((crumb, index) => <span key={`${crumb}-${index}`}><Icon name="chevronRight" size={14} /><button type="button" onClick={() => goToCrumb(index)} className={index === crumbs.length - 1 ? 'is-current' : ''}>{crumb}</button></span>)}</div>
-          {path && <button className="back-folder" type="button" onClick={() => { setSelected(undefined); setPath(parentPath); }}><Icon name="arrowLeft" size={16} /> Up one folder</button>}
+          <div className="file-toolbar">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => openModal({ type: 'new-file', parentPath: path })}
+              title="Create new file in this folder"
+            >
+              <Icon name="plus" size={14} /> New file
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => openModal({ type: 'new-folder', parentPath: path })}
+              title="Create new folder in this folder"
+            >
+              <Icon name="folder" size={14} /> New folder
+            </button>
+            {clipboard && (
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void pasteItem()}
+                disabled={actionBusy}
+                title={`Paste ${clipboard.name} into ${path ? `/${path}` : 'root'}`}
+              >
+                <Icon name="clipboard" size={14} /> Paste
+              </button>
+            )}
+          </div>
+          {clipboard && (
+            <div className="clipboard-banner">
+              <div className="clipboard-info">
+                <Icon name={clipboard.action === 'cut' ? 'scissors' : 'copy'} size={13} />
+                <span>
+                  {clipboard.action === 'cut' ? 'Cut' : 'Copied'}: <strong>{clipboard.name}</strong>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="button-icon-only"
+                onClick={clearClipboard}
+                title="Cancel clipboard"
+              >
+                <Icon name="close" size={13} />
+              </button>
+            </div>
+          )}
+          <div className="breadcrumbs">
+            <button type="button" onClick={() => setPath('')} className={!path ? 'is-current' : ''}>root</button>
+            {crumbs.map((crumb, index) => (
+              <span key={`${crumb}-${index}`}>
+                <Icon name="chevronRight" size={14} />
+                <button type="button" onClick={() => goToCrumb(index)} className={index === crumbs.length - 1 ? 'is-current' : ''}>{crumb}</button>
+              </span>
+            ))}
+          </div>
+          {path && (
+            <button className="back-folder" type="button" onClick={() => { setSelected(undefined); setPath(parentPath); }}>
+              <Icon name="arrowLeft" size={16} /> Up one folder
+            </button>
+          )}
           <div className="file-list" aria-label="Server files">
             {loading && <div className="loading-list"><span className="loading-bar" /><span className="loading-bar" /><span className="loading-bar" /></div>}
             {!loading && files.length === 0 && <div className="empty-inline">This folder is empty.</div>}
-            {files.map((file) => <button type="button" className={`file-row ${selected?.path === file.path ? 'is-selected' : ''}`} key={file.path} onClick={() => void openFile(file)}><Icon name={file.type === 'directory' ? 'folder' : 'file'} size={18} /><span className="file-name">{file.name}</span><span className="file-size">{file.type === 'directory' ? 'Folder' : formatBytes(file.size)}</span>{file.type === 'directory' && <Icon name="chevronRight" size={16} />}</button>)}
+            {files.map((file) => {
+              const isCut = clipboard?.action === 'cut' && clipboard.path === file.path;
+              const protectedEntry = isProtectedFile(file.name);
+              return (
+                <div
+                  className={`file-row ${selected?.path === file.path ? 'is-selected' : ''} ${isCut ? 'is-cut' : ''}`}
+                  key={file.path}
+                >
+                  <button
+                    type="button"
+                    className="file-main"
+                    onClick={() => void openFile(file)}
+                    title={file.type === 'directory' ? `Open ${file.name}` : `Edit ${file.name}`}
+                  >
+                    <Icon name={file.type === 'directory' ? 'folder' : 'file'} size={18} />
+                    <span className="file-name">{file.name}</span>
+                    <span className="file-size">{file.type === 'directory' ? 'Folder' : formatBytes(file.size)}</span>
+                    {file.type === 'directory' && <Icon name="chevronRight" size={16} />}
+                  </button>
+                  <div className="file-actions">
+                    <button
+                      type="button"
+                      className="file-action-btn"
+                      title="Copy"
+                      onClick={(e) => { e.stopPropagation(); copyItem(file); }}
+                    >
+                      <Icon name="copy" size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="file-action-btn"
+                      title={protectedEntry ? 'Protected server file cannot be moved' : 'Cut'}
+                      disabled={protectedEntry}
+                      onClick={(e) => { e.stopPropagation(); cutItem(file); }}
+                    >
+                      <Icon name="scissors" size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="file-action-btn"
+                      title={protectedEntry ? 'Protected server file cannot be renamed' : 'Rename'}
+                      disabled={protectedEntry}
+                      onClick={(e) => { e.stopPropagation(); openModal({ type: 'rename', file }); }}
+                    >
+                      <Icon name="edit" size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="file-action-btn file-action-danger"
+                      title={protectedEntry ? 'Protected server file cannot be deleted' : 'Delete'}
+                      disabled={protectedEntry}
+                      onClick={(e) => { e.stopPropagation(); openModal({ type: 'delete', file }); }}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="file-editor">
           {loadingContent && <div className="editor-empty">Loading <span className="button-loader" /> </div>}
           {!loadingContent && !selected && <div className="editor-empty"><Icon name="files" size={30} /><strong>Select a text file</strong><span>Only files returned from this server directory can be opened.</span></div>}
-          {!loadingContent && selected && <><div className="editor-toolbar"><div><Icon name="file" size={17} /><strong>{selected.path}</strong></div><div>{saved && <span className="saved-indicator"><Icon name="check" size={16} /> Saved</span>}<button className="button button-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? 'Saving…' : 'Save file'}</button></div></div><textarea spellCheck={false} value={selected.content} onChange={(event) => { setSelected({ ...selected, content: event.target.value }); setSaved(false); }} aria-label={`Edit ${selected.path}`} /></>}
+          {!loadingContent && selected && (
+            <>
+              <div className="editor-toolbar">
+                <div><Icon name="file" size={17} /><strong>{selected.path}</strong></div>
+                <div>
+                  {saved && <span className="saved-indicator"><Icon name="check" size={16} /> Saved</span>}
+                  <button className="button button-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? 'Saving…' : 'Save file'}</button>
+                </div>
+              </div>
+              <textarea
+                spellCheck={false}
+                value={selected.content}
+                onChange={(event) => { setSelected({ ...selected, content: event.target.value }); setSaved(false); }}
+                aria-label={`Edit ${selected.path}`}
+              />
+            </>
+          )}
         </div>
       </div>
+
+      {activeModal && (
+        <div className="modal-backdrop" onClick={closeModal} role="presentation">
+          <div
+            className="modal file-action-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="file-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h4 id="file-modal-title">
+                {activeModal.type === 'new-file' && 'New File'}
+                {activeModal.type === 'new-folder' && 'New Folder'}
+                {activeModal.type === 'rename' && `Rename ${activeModal.file.type === 'directory' ? 'Folder' : 'File'}`}
+                {activeModal.type === 'delete' && `Delete ${activeModal.file.type === 'directory' ? 'Folder' : 'File'}`}
+              </h4>
+              <button type="button" className="button-icon-only" onClick={closeModal} aria-label="Close dialog">
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+            <form onSubmit={(e) => void handleModalSubmit(e)}>
+              <div className="modal-body">
+                {activeModal.type === 'delete' ? (
+                  <p className="delete-confirm-text">
+                    Are you sure you want to delete <strong>{activeModal.file.name}</strong>
+                    {activeModal.file.type === 'directory' ? ' and all its contents' : ''}? This action cannot be undone.
+                  </p>
+                ) : (
+                  <label className="form-field">
+                    <span className="field-label">
+                      {activeModal.type === 'rename' ? 'New name' : activeModal.type === 'new-folder' ? 'Folder name' : 'File name'}
+                    </span>
+                    <input
+                      autoFocus
+                      className="input"
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                      placeholder={
+                        activeModal.type === 'new-folder'
+                          ? 'e.g. world_backups'
+                          : 'e.g. config.yml'
+                      }
+                      disabled={modalBusy}
+                    />
+                  </label>
+                )}
+                {modalError && (
+                  <div className="inline-alert alert-error" role="alert">
+                    <Icon name="warning" size={16} />
+                    <span>{modalError}</span>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="button button-secondary" onClick={closeModal} disabled={modalBusy}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={`button ${activeModal.type === 'delete' ? 'button-danger' : 'button-primary'}`}
+                  disabled={modalBusy || (activeModal.type !== 'delete' && !modalInput.trim())}
+                >
+                  {modalBusy
+                    ? 'Working…'
+                    : activeModal.type === 'delete'
+                      ? 'Delete permanently'
+                      : activeModal.type === 'rename'
+                        ? 'Rename'
+                        : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
