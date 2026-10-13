@@ -1,0 +1,6 @@
+# NodePilot creates a random token from the Players tab. Paste the displayed values here.
+# This plugin opens an outbound WebSocket only; it never listens on a network port.
+nodepilot-url: "ws://127.0.0.1:7420/api/bridge/connect"
+server-id: ""
+token: ""
+reconnect-seconds: 5

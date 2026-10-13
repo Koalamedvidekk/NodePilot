@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.vite/
+.env
+.env.*
+!.env.example
+.nodepilot/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+*.tsbuildinfo
+coverage/
+.DS_Store
+Thumbs.db

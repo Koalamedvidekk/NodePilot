@@ -1,0 +1,6 @@
+instead of "add-ons" tab use mods/plugins tab depending on what the server version uses, for example vanilla server wouldnt even have that tab visible because it doesnt support mods and plugins, paper server would have the tab "plugins" visible, forge server would have "mods" visible.
+
+
+Add checks if the server folder in the .nodepilot directory actually exist - i deleted the folder manually in my pc but on the website it still shows the server, i cant delete it because "The server directory does not exist" so the server would be there forever
+
+

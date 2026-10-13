@@ -1,0 +1,7 @@
+name: NodePilotBridge
+version: 0.1.0
+main: dev.nodepilot.bridge.NodePilotBridgePlugin
+api-version: '1.21'
+description: Authenticated local player-management bridge for NodePilot.
+author: NodePilot
+website: https://github.com/nodepilot/nodepilot
