@@ -73,10 +73,11 @@ function ConsolePanel({ server }: { server: Server }) {
   useEffect(() => {
     let active = true;
     let socket: WebSocket | undefined;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
     setLines([]);
     setLoading(true);
     setError(undefined);
-    setConnection('connecting');
 
     void api.logs(server.id)
       .then((entries) => {
@@ -85,21 +86,53 @@ function ConsolePanel({ server }: { server: Server }) {
       .catch((cause) => active && setError(`Couldn’t load console history: ${errorMessage(cause)}`))
       .finally(() => active && setLoading(false));
 
-    try {
-      socket = new WebSocket(websocketUrl(server.id));
-      socket.onopen = () => active && setConnection('connected');
-      socket.onmessage = (event) => {
-        const line = parseConsolePayload(event.data);
-        if (active && line) append(line);
-      };
-      socket.onerror = () => active && setConnection('disconnected');
-      socket.onclose = () => active && setConnection('disconnected');
-    } catch {
-      setConnection('disconnected');
+    function connect() {
+      if (!active) return;
+      setConnection('connecting');
+
+      try {
+        const ws = new WebSocket(websocketUrl(server.id));
+        socket = ws;
+
+        ws.onopen = () => {
+          if (!active) return;
+          setConnection('connected');
+        };
+
+        ws.onmessage = (event) => {
+          const line = parseConsolePayload(event.data);
+          if (active && line) append(line);
+        };
+
+        ws.onerror = () => {
+          if (!active) return;
+          setConnection('disconnected');
+        };
+
+        ws.onclose = () => {
+          if (!active) return;
+          setConnection('disconnected');
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            if (active) connect();
+          }, 2500);
+        };
+      } catch {
+        if (active) {
+          setConnection('disconnected');
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            if (active) connect();
+          }, 2500);
+        }
+      }
     }
+
+    connect();
 
     return () => {
       active = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       socket?.close();
     };
   }, [append, server.id]);
@@ -130,7 +163,7 @@ function ConsolePanel({ server }: { server: Server }) {
     <section className="management-panel console-panel panel">
       <div className="panel-heading console-heading">
         <div><h3>Live console</h3><p>Output is streamed from this local server.</p></div>
-        <span className={`console-connection ${connection}`}><span /> {connection === 'connected' ? 'Live connection' : connection === 'connecting' ? 'Connecting…' : 'Reconnecting unavailable'}</span>
+        <span className={`console-connection ${connection}`}><span /> {connection === 'connected' ? 'Live connection' : connection === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</span>
       </div>
       {error && <div className="inline-alert alert-error console-alert" role="alert"><Icon name="warning" size={18} /><div><strong>Console request failed.</strong><span>{error}</span></div></div>}
       <div className="terminal-window" ref={consoleRef} aria-live="polite" aria-label="Server console output">

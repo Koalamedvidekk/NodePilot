@@ -308,12 +308,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (
       !urlPath.startsWith('/api/') ||
       urlPath.startsWith('/api/auth/') ||
-      urlPath === '/api/network'
+      urlPath === '/api/network' ||
+      urlPath === '/api/bridge/connect'
     ) {
       return;
     }
 
-    const providedPin = (request.headers['x-nodepilot-pin'] as string | undefined)?.trim();
+    const queryPin = (request.query as Record<string, string> | undefined)?.pin;
+    const headerPin = request.headers['x-nodepilot-pin'] as string | undefined;
+    const providedPin = (headerPin ?? queryPin)?.trim();
     if (providedPin && providedPin === config.pin) {
       return;
     }
