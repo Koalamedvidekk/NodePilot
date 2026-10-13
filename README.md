@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # NodePilot
 
 NodePilot is a free, local-first game server manager for Windows and Linux. It
@@ -223,3 +224,6 @@ without remapping existing configuration.
 ## License
 
 NodePilot is released under the [MIT License](LICENSE).
+=======
+# NodePilot
+>>>>>>> 335580e9105dcc8126dd5a4faeab8bab8d4c32b5
