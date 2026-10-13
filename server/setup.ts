@@ -80,12 +80,18 @@ export async function runInteractiveSetup(): Promise<void> {
 export async function shouldRunFirstTimeSetup(): Promise<boolean> {
   const projectRoot = projectDirectory();
   const envPath = path.join(projectRoot, '.env');
+  const serverEnvPath = path.join(projectRoot, 'server', '.env');
   try {
     await access(envPath);
     return false;
   } catch {
-    // .env does not exist yet; if interactive terminal, offer setup
-    return Boolean(process.stdout.isTTY && process.stdin.isTTY);
+    try {
+      await access(serverEnvPath);
+      return false;
+    } catch {
+      // .env does not exist yet; if interactive terminal, offer setup
+      return Boolean(process.stdout.isTTY && process.stdin.isTTY);
+    }
   }
 }
 
