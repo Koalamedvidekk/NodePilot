@@ -87,14 +87,51 @@ then `npm start`.
 
 ## Configuration and data
 
-Copy `.env.example` to `.env` if you want to change the default bind host,
-port, or data location. The default `NODEPILOT_HOST=127.0.0.1` intentionally prevents
-network exposure. If you change it, use a firewall and an authentication proxy;
-the initial local-only release does not include multi-user authentication.
+When running for the first time, NodePilot offers an interactive setup wizard in your terminal to choose whether you want to run locally on your PC or make NodePilot accessible to other devices on your local Wi-Fi / LAN network. You can run or re-run this anytime with:
 
-By default NodePilot keeps its SQLite catalogue and managed server directories
-under `.nodepilot/` in the project directory. That directory is ignored by Git. Back it
-up to preserve worlds and configuration.
+```bash
+npm run setup
+```
+
+You can also copy `.env.example` to `.env` to configure settings manually:
+- `NODEPILOT_HOST=127.0.0.1` binds exclusively to your local machine.
+- `NODEPILOT_HOST=0.0.0.0` enables LAN mode, allowing you to access the dashboard and control Minecraft servers from other laptops, PCs, or phones on the same Wi-Fi.
+- `NODEPILOT_PORT=7420` specifies the web panel port.
+- `NODEPILOT_PIN=1234` (optional) protects LAN access with a PIN code.
+- `NODEPILOT_DATA_DIR` overrides the directory where server instances and SQLite catalogue data are stored (defaults to `.nodepilot/`).
+
+By default NodePilot keeps its SQLite catalogue and managed server directories under `.nodepilot/` in the project directory. That directory is ignored by Git. Back it up to preserve worlds and configuration.
+
+## 🌐 Running on an Old Laptop or Dedicated Home Server (LAN Remote Control)
+
+Have an old laptop or desktop sitting around? You can turn it into a dedicated Minecraft server host and manage it seamlessly from your main PC or laptop over your home Wi-Fi:
+
+1. **Setup on the old laptop**:
+   - Clone the repository and install dependencies (`npm install && npm run build`).
+   - Run `npm run setup` and choose **Visible on Local Network / LAN (0.0.0.0)**.
+   - Optionally set an access PIN to keep your dashboard protected on shared networks.
+   - Run `npm start`. NodePilot will print your direct LAN access URLs:
+     ```
+     ========================================================================
+       🚀 NodePilot is ready!
+       Local access:   http://localhost:7420
+       Network access: http://192.168.1.150:7420
+       Mode:           Visible on Local Network (0.0.0.0)
+     ========================================================================
+     ```
+
+2. **Control from your main laptop / phone**:
+   - Make sure your main device is connected to the same Wi-Fi or router.
+   - Open `http://<laptop-ip>:7420` (e.g. `http://192.168.1.150:7420`) in any web browser.
+   - Enter your PIN if configured, and you have complete control over all game servers, live consoles, file management, and performance monitoring.
+
+3. **Playing Minecraft on LAN**:
+   - Minecraft servers started through NodePilot bind to all network interfaces.
+   - Players on your home network can connect in Minecraft using the old laptop's local IP and the server's configured port (e.g. `192.168.1.150:25565`).
+
+4. **Change modes anytime in the web panel**:
+   - Click the **Local mode / LAN mode** pill in the top header or the host card in the sidebar footer to open the **Network & Remote Access** modal.
+   - View your detected IP addresses, copy URLs with 1 click, switch between Local and LAN modes, or update your PIN without restarting manually.
 
 ## Creating a server
 
@@ -205,6 +242,7 @@ without remapping existing configuration.
 
 | Command | Purpose |
 | --- | --- |
+| `npm run setup` | Run interactive setup wizard to configure network access (Local vs LAN) and PIN. |
 | `npm run dev` | Run the backend and Vite development server together. |
 | `npm run dev:server` | Run only the TypeScript Fastify backend. |
 | `npm run dev:client` | Run only the Vite frontend. |

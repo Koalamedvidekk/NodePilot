@@ -1,6 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { api } from '../api';
 import { Icon, type IconName } from './Icon';
+import { NetworkModal } from './NetworkModal';
+import { PinModal } from './PinModal';
+import type { AuthStatus, NetworkInfo } from '../types';
 
 interface NavigationItem {
   label: string;
@@ -38,20 +42,53 @@ function titleForPath(pathname: string): string {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [network, setNetwork] = useState<NetworkInfo | null>(null);
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [networkModalOpen, setNetworkModalOpen] = useState(false);
   const location = useLocation();
+
+  const loadNetworkAndAuth = useCallback(async () => {
+    try {
+      const [net, authState] = await Promise.all([api.network(), api.authStatus()]);
+      setNetwork(net);
+      setAuth(authState);
+    } catch {
+      // Offline or network error
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadNetworkAndAuth();
+  }, [loadNetworkAndAuth]);
 
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  const displayIp = network?.isNetworkVisible && network.addresses.length > 0
+    ? network.addresses[0]
+    : '127.0.0.1';
+
   return (
     <div className="app-shell">
+      {auth?.hasPin && !auth.authenticated && (
+        <PinModal onSuccess={() => void loadNetworkAndAuth()} />
+      )}
+
+      {networkModalOpen && network && (
+        <NetworkModal
+          network={network}
+          onClose={() => setNetworkModalOpen(false)}
+          onRefresh={() => void loadNetworkAndAuth()}
+        />
+      )}
+
       <aside className={`sidebar ${sidebarOpen ? 'is-open' : ''}`} aria-label="Primary navigation">
         <div className="brand-row">
           <div className="brand-mark"><Icon name="box" size={23} /></div>
           <div>
             <span className="brand-name">NodePilot</span>
-            <span className="brand-caption">LOCAL CONTROL PLANE</span>
+            <span className="brand-caption">{network?.isNetworkVisible ? 'LAN CONTROL PLANE' : 'LOCAL CONTROL PLANE'}</span>
           </div>
           <button className="icon-button sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <Icon name="close" />
@@ -70,14 +107,23 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="local-host-card">
-            <span className="host-pulse" />
+          <button
+            type="button"
+            className="local-host-card is-clickable"
+            onClick={() => setNetworkModalOpen(true)}
+            title="Click to view network and remote control settings"
+          >
+            <span className={`host-pulse ${network?.isNetworkVisible ? 'is-lan' : ''}`} />
             <div>
-              <strong>Local host</strong>
-              <span>127.0.0.1</span>
+              <strong>{network?.isNetworkVisible ? 'LAN host' : 'Local host'}</strong>
+              <span>{displayIp}:{network?.port ?? 7420}</span>
             </div>
-          </div>
-          <p>NodePilot runs entirely on this machine.</p>
+          </button>
+          <p>
+            {network?.isNetworkVisible
+              ? 'Visible on local network. Click to manage.'
+              : 'Local PC only. Click to make visible on LAN.'}
+          </p>
         </div>
       </aside>
 
@@ -89,11 +135,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Icon name="menu" />
           </button>
           <div className="topbar-title">
-            <span className="eyebrow">NODEPILOT / LOCAL</span>
+            <span className="eyebrow">{network?.isNetworkVisible ? 'NODEPILOT / LAN' : 'NODEPILOT / LOCAL'}</span>
             <h1>{titleForPath(location.pathname)}</h1>
           </div>
           <div className="topbar-status">
-            <span className="connection-indicator"><span /> Local mode</span>
+            <button
+              type="button"
+              className={`connection-indicator is-button ${network?.isNetworkVisible ? 'is-lan' : ''}`}
+              onClick={() => setNetworkModalOpen(true)}
+              title="Click to view network access URLs"
+            >
+              {network?.isNetworkVisible ? <Icon name="wifi" size={13} /> : <span />}
+              {network?.isNetworkVisible ? 'LAN mode' : 'Local mode'}
+            </button>
           </div>
         </header>
         <div className="content-area">{children}</div>

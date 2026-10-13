@@ -21,6 +21,7 @@ export type IconName =
   | 'folder'
   | 'info'
   | 'java'
+  | 'lock'
   | 'menu'
   | 'more'
   | 'play'
@@ -34,7 +35,8 @@ export type IconName =
   | 'terminal'
   | 'trash'
   | 'users'
-  | 'warning';
+  | 'warning'
+  | 'wifi';
 
 const paths: Record<IconName, React.ReactNode> = {
   activity: <><path d="M3 12h4l3-9 4 18 3-9h4" /></>,
@@ -57,6 +59,7 @@ const paths: Record<IconName, React.ReactNode> = {
   folder: <path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></>,
   java: <><path d="M8.5 16c0 1.5 1.7 2.5 3.8 2.5s3.7-1 3.7-2.5" /><path d="M9 13.5c1.8.8 4.2.8 6 0" /><path d="M12 4c1.3 1.2-1 2.1.2 3.3 1.2 1.2-.9 2.1.3 3.2" /><path d="M7 20h10" /></>,
+  lock: <><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
   menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
   more: <><circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" /></>,
   play: <path d="m8 5 11 7-11 7z" fill="currentColor" stroke="none" />,
@@ -71,6 +74,7 @@ const paths: Record<IconName, React.ReactNode> = {
   trash: <><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v5M14 11v5" /></>,
   users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
   warning: <><path d="m10.3 4.5-7 12.1A2 2 0 0 0 5 19.5h14a2 2 0 0 0 1.7-2.9l-7-12.1a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 16h.01" /></>,
+  wifi: <><path d="M12 20h.01" /><path d="M2 8.82a15 15 0 0 1 20 0" /><path d="M5 12.859a10 10 0 0 1 14 0" /><path d="M8.5 16.429a5 5 0 0 1 7 0" /></>,
 };
 
 export function Icon({ name, size = 20, ...props }: { name: IconName; size?: number } & SVGAttributes<SVGSVGElement>) {

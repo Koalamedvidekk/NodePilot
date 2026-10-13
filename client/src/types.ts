@@ -359,3 +359,22 @@ export interface ApiErrorShape {
   error?: string;
   details?: unknown;
 }
+
+export interface NetworkInfo {
+  host: string;
+  port: number;
+  isNetworkVisible: boolean;
+  addresses: string[];
+  accessUrls: { local: string; network: string[] };
+  hasPin: boolean;
+}
+
+export interface UpdateNetworkInput {
+  host: '127.0.0.1' | '0.0.0.0';
+  pin?: string | null;
+}
+
+export interface AuthStatus {
+  hasPin: boolean;
+  authenticated: boolean;
+}

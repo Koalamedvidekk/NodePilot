@@ -26,9 +26,33 @@ import type {
   PlayerList,
   ServerUsage,
   ServerSoftware,
+  NetworkInfo,
+  UpdateNetworkInput,
+  AuthStatus,
 } from './types';
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
+const PIN_KEY = 'nodepilot_pin';
+
+export function getStoredPin(): string | null {
+  try {
+    return localStorage.getItem(PIN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredPin(pin: string): void {
+  try {
+    localStorage.setItem(PIN_KEY, pin);
+  } catch {}
+}
+
+export function clearStoredPin(): void {
+  try {
+    localStorage.removeItem(PIN_KEY);
+  } catch {}
+}
 
 export class ApiError extends Error {
   readonly status: number;
@@ -47,10 +71,12 @@ function endpoint(path: string): string {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const pin = getStoredPin();
   const response = await fetch(endpoint(path), {
     ...init,
     headers: {
       Accept: 'application/json',
+      ...(pin ? { 'x-nodepilot-pin': pin } : {}),
       ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
@@ -561,16 +587,69 @@ export const api = {
   async createPlayerBridgeCredentials(id: string): Promise<PlayerBridgeSetup> {
     return unwrap(await request<PlayerBridgeSetup | { data: PlayerBridgeSetup }>(`/servers/${encodeURIComponent(id)}/players/bridge/credentials`, { method: 'POST' }));
   },
+
+  async network(): Promise<NetworkInfo> {
+    const payload = unwrap(await request<unknown>('/network'));
+    const raw = object(payload);
+    const urls = object(raw.accessUrls);
+    return {
+      host: String(raw.host ?? '127.0.0.1'),
+      port: Number(raw.port ?? 7420),
+      isNetworkVisible: Boolean(raw.isNetworkVisible),
+      addresses: Array.isArray(raw.addresses) ? raw.addresses.map(String) : [],
+      accessUrls: {
+        local: String(urls.local ?? 'http://localhost:7420'),
+        network: Array.isArray(urls.network) ? urls.network.map(String) : [],
+      },
+      hasPin: Boolean(raw.hasPin),
+    };
+  },
+
+  async updateNetwork(input: UpdateNetworkInput): Promise<{ ok: boolean; requiresRestart: boolean; message: string }> {
+    return unwrap(
+      await request<{ ok: boolean; requiresRestart: boolean; message: string }>('/network', {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    );
+  },
+
+  async authStatus(): Promise<AuthStatus> {
+    const payload = unwrap(await request<unknown>('/auth/status'));
+    const raw = object(payload);
+    return {
+      hasPin: Boolean(raw.hasPin),
+      authenticated: Boolean(raw.authenticated),
+    };
+  },
+
+  async verifyPin(pin: string): Promise<boolean> {
+    const payload = unwrap(
+      await request<{ ok: boolean }>('/auth/verify', {
+        method: 'POST',
+        body: JSON.stringify({ pin }),
+      }),
+    );
+    if (payload.ok) {
+      setStoredPin(pin);
+      return true;
+    }
+    return false;
+  },
 };
 
 export function websocketUrl(serverId: string): string {
   const explicit = import.meta.env.VITE_WS_URL as string | undefined;
+  const pin = getStoredPin();
   if (explicit) {
     const url = new URL(explicit, window.location.href);
     url.searchParams.set('serverId', serverId);
+    if (pin) url.searchParams.set('pin', pin);
     return url.toString();
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}${API_ROOT}/servers/${encodeURIComponent(serverId)}/console`;
+  const url = new URL(`${protocol}//${window.location.host}${API_ROOT}/servers/${encodeURIComponent(serverId)}/console`);
+  if (pin) url.searchParams.set('pin', pin);
+  return url.toString();
 }

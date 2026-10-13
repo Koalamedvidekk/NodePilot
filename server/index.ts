@@ -14,10 +14,12 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { getConfig } from './config.js';
+import { getConfig, updateEnvFile } from './config.js';
 import { openDatabase } from './db.js';
 import { AppError, asAppError, errorMessage } from './lib/errors.js';
+import { formatAccessUrls, getLocalNetworkAddresses, isAllowedOrigin } from './lib/network.js';
 import { ensureDirectory, managedServerDirectoryExists, resolveManagedServerRoot, safeDirectoryName } from './lib/paths.js';
+import { runInteractiveSetup, shouldRunFirstTimeSetup } from './setup.js';
 import { ServerRepository } from './repositories/server-repository.js';
 import { FileService } from './services/file-service.js';
 import { JavaService } from './services/java-service.js';
@@ -31,7 +33,7 @@ import { ServerRuntime } from './services/server-runtime.js';
 import { SystemService } from './services/system-service.js';
 import type { ProvisionableServerSoftware, ServerRecord, ServerStatus } from './types.js';
 
-const config = getConfig();
+let config = getConfig();
 const idSchema = z.string().uuid();
 const flavorSchema = z.enum(['vanilla', 'paper']);
 const softwareSchema = z.enum(['vanilla', 'paper', 'spigot', 'purpur', 'fabric', 'forge', 'neoforge', 'quilt']);
@@ -80,6 +82,11 @@ const fileCreateFolderSchema = z.object({
 });
 const fileDeleteSchema = z.object({
   path: z.string().min(1).max(512),
+});
+const pinVerifySchema = z.object({ pin: z.string().min(1).max(64) });
+const networkUpdateSchema = z.object({
+  host: z.enum(['127.0.0.1', '0.0.0.0']),
+  pin: z.string().max(64).nullable().optional(),
 });
 const commandSchema = z.object({ command: z.string().min(1).max(500) });
 const versionQuerySchema = z.object({ flavor: flavorSchema.optional(), software: softwareSchema.optional() }).refine(
@@ -155,14 +162,8 @@ const playerActionSchema = z.object({
   if (value.action === 'inventory' && !value.inventory) context.addIssue({ code: z.ZodIssueCode.custom, path: ['inventory'], message: 'Provide inventory changes.' });
 });
 
-function isLocalOrigin(origin: string | undefined): boolean {
-  if (!origin) return true;
-  try {
-    const url = new URL(origin);
-    return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  } catch {
-    return false;
-  }
+function isAllowedRequestOrigin(origin: string | undefined): boolean {
+  return isAllowedOrigin(origin, config.host);
 }
 
 function publicStatus(status: ServerStatus): ServerStatus | 'stopped' {
@@ -291,13 +292,32 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env.NODEPILOT_LOG_LEVEL ?? 'info' }, bodyLimit: 1_100_000 });
 
   await app.register(cors, {
-    origin: (origin, callback) => callback(null, isLocalOrigin(origin)),
+    origin: (origin, callback) => callback(null, isAllowedRequestOrigin(origin)),
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
   });
   await app.register(websocket, { options: { maxPayload: 16_384 } });
   await app.register(multipart, {
     limits: { files: 1, fileSize: MAX_IMPORT_ARCHIVE_BYTES, fields: 4, parts: 5 },
     throwFileSizeLimit: true,
+  });
+
+  app.addHook('preHandler', async (request) => {
+    if (!config.pin) return;
+    const urlPath = request.url.split('?')[0];
+    if (
+      !urlPath.startsWith('/api/') ||
+      urlPath.startsWith('/api/auth/') ||
+      urlPath === '/api/network'
+    ) {
+      return;
+    }
+
+    const providedPin = (request.headers['x-nodepilot-pin'] as string | undefined)?.trim();
+    if (providedPin && providedPin === config.pin) {
+      return;
+    }
+
+    throw new AppError(401, 'pin_required', 'Access PIN required to control NodePilot remotely.');
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -729,9 +749,53 @@ export async function buildApp(): Promise<FastifyInstance> {
     return { player: await players.details(requireServer(repository, id), player) };
   });
 
+  app.get('/api/auth/status', async (request) => {
+    const hasPin = Boolean(config.pin);
+    const providedPin = (request.headers['x-nodepilot-pin'] as string | undefined)?.trim();
+    const authenticated = !hasPin || (Boolean(providedPin) && providedPin === config.pin);
+    return { hasPin, authenticated };
+  });
+
+  app.post('/api/auth/verify', async (request) => {
+    if (!config.pin) return { ok: true, pinRequired: false };
+    const { pin } = pinVerifySchema.parse(request.body);
+    if (pin.trim() !== config.pin) {
+      throw new AppError(401, 'invalid_pin', 'Incorrect access PIN.');
+    }
+    return { ok: true, pinRequired: true };
+  });
+
+  app.get('/api/network', async () => {
+    const addresses = getLocalNetworkAddresses();
+    const accessUrls = formatAccessUrls(config.host, config.port, addresses);
+    return {
+      host: config.host,
+      port: config.port,
+      isNetworkVisible: config.isNetworkVisible,
+      addresses,
+      accessUrls,
+      hasPin: Boolean(config.pin),
+    };
+  });
+
+  app.put('/api/network', async (request) => {
+    const input = networkUpdateSchema.parse(request.body);
+    const pin = input.pin !== undefined ? input.pin : undefined;
+    await updateEnvFile({
+      NODEPILOT_HOST: input.host,
+      ...(pin !== undefined ? { NODEPILOT_PIN: pin } : {}),
+    });
+    return {
+      ok: true,
+      requiresRestart: true,
+      host: input.host,
+      message: 'Network configuration saved to .env. Restart NodePilot for changes to take effect.',
+    };
+  });
+
   app.get('/api/bridge/connect', { websocket: true }, (socket, request) => {
-    if (!isLocalOrigin(request.headers.origin)) {
-      socket.close(1008, 'Local origin required');
+    if (!isAllowedRequestOrigin(request.headers.origin)) {
+      socket.close(1008, 'Origin not permitted');
       return;
     }
     bridge.accept(socket);
@@ -741,8 +805,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     const origin = request.headers.origin;
     let server: ServerRecord;
     try {
-      if (!isLocalOrigin(origin)) {
-        socket.close(1008, 'Local origin required');
+      if (!isAllowedRequestOrigin(origin)) {
+        socket.close(1008, 'Origin not permitted');
+        return;
+      }
+      const pin = (request.query as Record<string, string> | undefined)?.pin ?? (request.headers['x-nodepilot-pin'] as string | undefined);
+      if (config.pin && (!pin || pin.trim() !== config.pin)) {
+        socket.close(1008, 'PIN required');
         return;
       }
       const { id } = serverParamsSchema.parse(request.params);
@@ -795,10 +864,33 @@ export async function buildApp(): Promise<FastifyInstance> {
   return app;
 }
 
+if (await shouldRunFirstTimeSetup()) {
+  await runInteractiveSetup();
+  config = getConfig();
+}
+
 const app = await buildApp();
 try {
   await app.listen({ host: config.host, port: config.port });
-  app.log.info(`NodePilot listening at http://${config.host}:${config.port}`);
+  const addresses = getLocalNetworkAddresses();
+  console.log('\n============================================================');
+  console.log('  🚀 NodePilot is running!');
+  console.log('============================================================');
+  console.log(`  ➜ Local:   http://localhost:${config.port}`);
+  if (config.isNetworkVisible && addresses.length > 0) {
+    for (const ip of addresses) {
+      console.log(`  ➜ Network: http://${ip}:${config.port}`);
+    }
+    console.log('\n  Mode: Local Network (LAN)');
+    console.log('  👉 Open the Network URL on your main laptop or phone!');
+  } else {
+    console.log('  Mode: Local PC only (127.0.0.1)');
+    console.log('  (Run "npm run setup" to make visible on your local network)');
+  }
+  if (config.pin) {
+    console.log('  🔒 Security PIN: Active');
+  }
+  console.log('============================================================\n');
 } catch (error) {
   app.log.error(error);
   process.exitCode = 1;
