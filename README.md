@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # NodePilot
 
 NodePilot is a free, local-first game server manager for Windows and Linux. It
@@ -51,8 +50,8 @@ mandatory telemetry required.
 ### Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/your-account/nodepilot.git
-Set-Location nodepilot
+git clone https://github.com/Koalamedvidekk/NodePilot.git
+Set-Location NodePilot
 npm install
 npm run build
 npm start
@@ -64,8 +63,8 @@ For Spigot, install Git for Windows and reopen PowerShell so `git --version` wor
 ### Linux
 
 ```bash
-git clone https://github.com/your-account/nodepilot.git
-cd nodepilot
+git clone https://github.com/Koalamedvidekk/NodePilot.git
+cd NodePilot
 npm install
 npm run build
 npm start
@@ -224,6 +223,4 @@ without remapping existing configuration.
 ## License
 
 NodePilot is released under the [MIT License](LICENSE).
-=======
-# NodePilot
->>>>>>> 335580e9105dcc8126dd5a4faeab8bab8d4c32b5
+
