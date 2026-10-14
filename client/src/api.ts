@@ -29,6 +29,10 @@ import type {
   NetworkInfo,
   UpdateNetworkInput,
   AuthStatus,
+  HostSettings,
+  HostStartupStatus,
+  PlayitStatus,
+  HostDiagnostics,
 } from './types';
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
@@ -635,6 +639,92 @@ export const api = {
       return true;
     }
     return false;
+  },
+
+  async getHostSettings(): Promise<{
+    settings: HostSettings;
+    startup: HostStartupStatus;
+    playit: PlayitStatus;
+  }> {
+    return unwrap(
+      await request<{
+        settings: HostSettings;
+        startup: HostStartupStatus;
+        playit: PlayitStatus;
+      }>('/host/settings'),
+    );
+  },
+
+  async updateHostSettings(settings: Partial<HostSettings>): Promise<{
+    settings: HostSettings;
+    startup: HostStartupStatus;
+  }> {
+    return unwrap(
+      await request<{
+        settings: HostSettings;
+        startup: HostStartupStatus;
+      }>('/host/settings', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      }),
+    );
+  },
+
+  async enableHostStartup(options?: {
+    launchMode?: 'headless' | 'windowed';
+    openBrowserOnStartup?: boolean;
+  }): Promise<{ ok: boolean; startup: HostStartupStatus; settings: HostSettings }> {
+    return unwrap(
+      await request<{ ok: boolean; startup: HostStartupStatus; settings: HostSettings }>('/host/startup/enable', {
+        method: 'POST',
+        body: JSON.stringify(options ?? {}),
+      }),
+    );
+  },
+
+  async disableHostStartup(): Promise<{ ok: boolean; startup: HostStartupStatus; settings: HostSettings }> {
+    return unwrap(
+      await request<{ ok: boolean; startup: HostStartupStatus; settings: HostSettings }>('/host/startup/disable', {
+        method: 'POST',
+      }),
+    );
+  },
+
+  async getPlayitStatus(): Promise<PlayitStatus> {
+    const res = await request<{ playit: PlayitStatus }>('/host/playit');
+    return res.playit;
+  },
+
+  async startPlayit(): Promise<{ ok: boolean; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/start', {
+        method: 'POST',
+      }),
+    );
+  },
+
+  async stopPlayit(): Promise<{ ok: boolean; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/stop', {
+        method: 'POST',
+      }),
+    );
+  },
+
+  async getHostDiagnostics(): Promise<HostDiagnostics> {
+    return unwrap(await request<HostDiagnostics>('/host/diagnostics'));
+  },
+
+  async setServerAutoStart(
+    serverId: string,
+    autoStart: 'always' | 'disabled',
+  ): Promise<{ ok: boolean; server: Server }> {
+    return unwrap(
+      await request<{ ok: boolean; server: Server }>(`/servers/${encodeURIComponent(serverId)}/autostart`, {
+        method: 'PUT',
+        body: JSON.stringify({ autoStart }),
+      }),
+    );
   },
 };
 

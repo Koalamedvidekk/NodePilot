@@ -68,6 +68,10 @@ export function openDatabase(databasePath: string): SqliteDatabase {
     );
   }
 
+  if (!columns.some((column) => column.name === 'auto_start')) {
+    database.exec("ALTER TABLE servers ADD COLUMN auto_start TEXT NOT NULL DEFAULT 'disabled'");
+  }
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS addon_installs (
       server_id TEXT NOT NULL,
@@ -89,6 +93,12 @@ export function openDatabase(databasePath: string): SqliteDatabase {
       created_at TEXT NOT NULL,
       rotated_at TEXT NOT NULL,
       FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS host_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
   `);
 

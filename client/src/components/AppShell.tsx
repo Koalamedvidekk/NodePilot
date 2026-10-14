@@ -16,6 +16,7 @@ interface NavigationItem {
 const primaryNav: NavigationItem[] = [
   { label: 'Overview', to: '/', icon: 'dashboard', end: true },
   { label: 'Servers', to: '/servers', icon: 'server', end: true },
+  { label: 'Host Settings', to: '/settings', icon: 'settings', end: true },
 ];
 
 function NavItem({ item, onClick }: { item: NavigationItem; onClick?: () => void }) {
@@ -37,6 +38,7 @@ function titleForPath(pathname: string): string {
   if (pathname === '/servers') return 'Servers';
   if (pathname === '/servers/new') return 'Create server';
   if (pathname === '/servers/import') return 'Import server';
+  if (pathname === '/settings') return 'Host Settings & Startup';
   return 'Server management';
 }
 

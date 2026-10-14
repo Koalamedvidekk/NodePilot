@@ -27,6 +27,7 @@ type DatabaseServer = {
   status: ServerStatus;
   install_state: InstallState;
   java_path: string | null;
+  auto_start: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -166,6 +167,7 @@ function mapServer(row: DatabaseServer): ServerRecord {
     status: row.status,
     installState: row.install_state,
     javaPath: row.java_path,
+    autoStart: row.auto_start === 'always' ? 'always' : 'disabled',
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -303,6 +305,14 @@ export class ServerRepository {
 
   markInstallFailed(id: string, error: string): ServerRecord {
     return this.setStatus(id, 'error', { installState: 'failed', lastError: error });
+  }
+
+  setAutoStart(id: string, autoStart: 'always' | 'disabled'): ServerRecord {
+    const current = this.require(id);
+    this.database
+      .prepare('UPDATE servers SET auto_start = ?, updated_at = ? WHERE id = ?')
+      .run(autoStart, new Date().toISOString(), current.id);
+    return this.require(id);
   }
 
   markInterruptedProcessesOffline(): void {

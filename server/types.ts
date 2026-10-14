@@ -53,6 +53,8 @@ export const defaultServerStartupConfig: ServerStartupConfig = {
   gameArguments: ['nogui'],
 };
 
+export type AutoStartMode = 'always' | 'disabled';
+
 export interface ServerRecord {
   id: string;
   /** The local runner today; retained so remote agents can be introduced without remapping records. */
@@ -73,11 +75,53 @@ export interface ServerRecord {
   status: ServerStatus;
   installState: InstallState;
   javaPath: string | null;
+  autoStart: AutoStartMode;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
   lastStartedAt: string | null;
   lastStoppedAt: string | null;
+}
+
+export interface HostSettings {
+  systemStartupEnabled: boolean;
+  launchMode: 'headless' | 'windowed';
+  openBrowserOnStartup: boolean;
+  continueRunningOnClose: boolean;
+}
+
+export interface HostStartupStatus {
+  platform: 'win32' | 'linux' | 'darwin' | string;
+  isSupported: boolean;
+  configuredInDatabase: boolean;
+  registeredInOs: boolean;
+  registrationDetails: string;
+  launchMode: 'headless' | 'windowed';
+  openBrowserOnStartup: boolean;
+  serviceName?: string;
+  serviceFile?: string;
+  requiresElevation: boolean;
+  permissionsExplanation: string;
+}
+
+export interface PlayitStatus {
+  installed: boolean;
+  binaryPath: string | null;
+  version: string | null;
+  isRunning: boolean;
+  secretExists: boolean;
+  secretPath: string | null;
+  error?: string | null;
+}
+
+export interface HostDiagnostics {
+  pid: number;
+  uptimeSeconds: number;
+  nodeVersion: string;
+  platform: string;
+  arch: string;
+  memoryUsageMb: number;
+  recentLogs: Array<{ timestamp: string; level: 'info' | 'warn' | 'error'; message: string }>;
 }
 
 export interface MinecraftVersion {

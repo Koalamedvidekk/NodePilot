@@ -31,6 +31,7 @@ export interface Server {
   requiredJavaMajor?: number;
   installState?: 'installing' | 'ready' | 'failed' | string;
   javaPath?: string;
+  autoStart?: 'always' | 'disabled';
   lastStartedAt?: string;
   lastStoppedAt?: string;
   players?: { online: number; max: number };
@@ -379,4 +380,45 @@ export interface UpdateNetworkInput {
 export interface AuthStatus {
   hasPin: boolean;
   authenticated: boolean;
+}
+
+export interface HostSettings {
+  systemStartupEnabled: boolean;
+  launchMode: 'headless' | 'windowed';
+  openBrowserOnStartup: boolean;
+  continueRunningOnClose: boolean;
+}
+
+export interface HostStartupStatus {
+  platform: 'win32' | 'linux' | 'darwin' | string;
+  isSupported: boolean;
+  configuredInDatabase: boolean;
+  registeredInOs: boolean;
+  registrationDetails: string;
+  launchMode: 'headless' | 'windowed';
+  openBrowserOnStartup: boolean;
+  serviceName?: string;
+  serviceFile?: string;
+  requiresElevation: boolean;
+  permissionsExplanation: string;
+}
+
+export interface PlayitStatus {
+  installed: boolean;
+  binaryPath: string | null;
+  version: string | null;
+  isRunning: boolean;
+  secretExists: boolean;
+  secretPath: string | null;
+  error?: string | null;
+}
+
+export interface HostDiagnostics {
+  pid: number;
+  uptimeSeconds: number;
+  nodeVersion: string;
+  platform: string;
+  arch: string;
+  memoryUsageMb: number;
+  recentLogs: Array<{ timestamp: string; level: 'info' | 'warn' | 'error'; message: string }>;
 }

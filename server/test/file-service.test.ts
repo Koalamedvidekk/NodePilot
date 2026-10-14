@@ -26,6 +26,7 @@ function mockServer(directory: string): ServerRecord {
     status: 'offline',
     installState: 'ready',
     javaPath: null,
+    autoStart: 'disabled',
     lastError: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

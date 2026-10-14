@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ImportServerPage } from './pages/ImportServerPage';
 import { ServerManagementPage } from './pages/ServerManagementPage';
 import { ServersPage } from './pages/ServersPage';
+import { HostSettingsPage } from './pages/HostSettingsPage';
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -43,6 +44,7 @@ export function App() {
           <Route path="/servers/new" element={<CreateServerPage />} />
           <Route path="/servers/import" element={<ImportServerPage />} />
           <Route path="/servers/:serverId/*" element={<ServerManagementPage />} />
+          <Route path="/settings" element={<HostSettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>

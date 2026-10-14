@@ -17,10 +17,12 @@ loadEnv();
 
 import { openDatabase } from './db.js';
 import { AppError, asAppError, errorMessage } from './lib/errors.js';
+import { InstanceLock } from './lib/lockfile.js';
 import { formatAccessUrls, getLocalNetworkAddresses, isAllowedOrigin } from './lib/network.js';
 import { ensureDirectory, managedServerDirectoryExists, resolveManagedServerRoot, safeDirectoryName } from './lib/paths.js';
 import { runInteractiveSetup, shouldRunFirstTimeSetup } from './setup.js';
 import { ServerRepository } from './repositories/server-repository.js';
+import { HostSettingsRepository } from './repositories/host-settings-repository.js';
 import { FileService } from './services/file-service.js';
 import { JavaService } from './services/java-service.js';
 import { ImportService } from './services/import-service.js';
@@ -31,7 +33,10 @@ import { PlayerService, type PlayerAction } from './services/player-service.js';
 import { ProcessMetricsService } from './services/process-metrics-service.js';
 import { ServerRuntime } from './services/server-runtime.js';
 import { SystemService } from './services/system-service.js';
-import type { ProvisionableServerSoftware, ServerRecord, ServerStatus } from './types.js';
+import { StartupService } from './services/startup-service.js';
+import { PlayitService } from './services/playit-service.js';
+import { AutoStartService } from './services/auto-start-service.js';
+import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus } from './types.js';
 
 let config = getConfig();
 let currentListeningHost = config.host;
@@ -88,6 +93,19 @@ const pinVerifySchema = z.object({ pin: z.string().min(1).max(64) });
 const networkUpdateSchema = z.object({
   host: z.enum(['127.0.0.1', '0.0.0.0']),
   pin: z.string().max(64).nullable().optional(),
+});
+const hostSettingsUpdateSchema = z.object({
+  systemStartupEnabled: z.boolean().optional(),
+  launchMode: z.enum(['headless', 'windowed']).optional(),
+  openBrowserOnStartup: z.boolean().optional(),
+  continueRunningOnClose: z.boolean().optional(),
+});
+const hostStartupEnableSchema = z.object({
+  launchMode: z.enum(['headless', 'windowed']).optional(),
+  openBrowserOnStartup: z.boolean().optional(),
+});
+const serverAutoStartSchema = z.object({
+  autoStart: z.enum(['always', 'disabled']),
 });
 const commandSchema = z.object({ command: z.string().min(1).max(500) });
 const versionQuerySchema = z.object({ flavor: flavorSchema.optional(), software: softwareSchema.optional() }).refine(
@@ -199,6 +217,7 @@ function serializeServer(server: ServerRecord, directoryExists = true) {
     eulaAccepted: server.eulaAccepted,
     requiredJavaMajor: server.requiredJavaMajor,
     javaPath: server.javaPath,
+    autoStart: server.autoStart ?? 'disabled',
     directory: server.directory,
     directoryExists,
     error: server.lastError,
@@ -280,9 +299,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   const database = openDatabase(config.databasePath);
   const repository = new ServerRepository(database);
   repository.markInterruptedProcessesOffline();
+  const hostSettings = new HostSettingsRepository(database);
+  const startup = new StartupService(hostSettings, path.resolve('.'));
+  const playit = new PlayitService();
   const minecraft = new MinecraftService(repository, config.serversDirectory);
   const java = new JavaService();
   const runtime = new ServerRuntime(repository, config.serversDirectory);
+  const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
   const files = new FileService(config.serversDirectory);
   const importer = new ImportService(config.serversDirectory, config.dataDirectory);
@@ -809,6 +832,81 @@ export async function buildApp(): Promise<FastifyInstance> {
     };
   });
 
+  // Host Settings & OS System Startup
+  app.get('/api/host/settings', async () => {
+    return {
+      settings: hostSettings.getSettings(),
+      startup: await startup.getStatus(),
+      playit: await playit.getStatus(),
+    };
+  });
+
+  app.put('/api/host/settings', async (request) => {
+    const input = hostSettingsUpdateSchema.parse(request.body);
+    const updated = hostSettings.saveSettings(input);
+    return {
+      settings: updated,
+      startup: await startup.getStatus(),
+    };
+  });
+
+  app.post('/api/host/startup/enable', async (request) => {
+    const input = hostStartupEnableSchema.parse(request.body ?? {});
+    const startupStatus = await startup.enableStartup(input);
+    return {
+      ok: true,
+      startup: startupStatus,
+      settings: hostSettings.getSettings(),
+    };
+  });
+
+  app.post('/api/host/startup/disable', async () => {
+    const startupStatus = await startup.disableStartup();
+    return {
+      ok: true,
+      startup: startupStatus,
+      settings: hostSettings.getSettings(),
+    };
+  });
+
+  app.get('/api/host/playit', async () => {
+    return { playit: await playit.getStatus() };
+  });
+
+  app.post('/api/host/playit/start', async () => {
+    const status = await playit.startAgent();
+    autoStart.log('info', 'User started Playit.gg agent via Host Settings.');
+    return { ok: true, playit: status };
+  });
+
+  app.post('/api/host/playit/stop', async () => {
+    const status = await playit.stopAgent();
+    autoStart.log('info', 'User stopped Playit.gg agent via Host Settings.');
+    return { ok: true, playit: status };
+  });
+
+  app.get('/api/host/diagnostics', async () => {
+    const memoryUsage = process.memoryUsage();
+    const diagnostics: HostDiagnostics = {
+      pid: process.pid,
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      platform: `${process.platform} (${process.arch})`,
+      arch: process.arch,
+      memoryUsageMb: Math.round(memoryUsage.rss / 1024 / 1024),
+      recentLogs: autoStart.getDiagnostics(),
+    };
+    return diagnostics;
+  });
+
+  app.put('/api/servers/:id/autostart', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    const { autoStart: mode } = serverAutoStartSchema.parse(request.body);
+    const updated = repository.setAutoStart(id, mode as AutoStartMode);
+    autoStart.log('info', `Server "${updated.name}" (${updated.id}) auto-start set to "${mode}".`);
+    return { ok: true, server: await serializeServerWithDiskCheck(updated, config.serversDirectory) };
+  });
+
   app.get('/api/bridge/connect', { websocket: true }, (socket, request) => {
     if (!isAllowedRequestOrigin(request.headers.origin)) {
       socket.close(1008, 'Origin not permitted');
@@ -871,6 +969,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     app.get('/', async () => ({ name: 'NodePilot', message: 'The browser app has not been built. Run npm run build.' }));
   }
 
+  app.decorate('autoStart', autoStart);
   app.addHook('onClose', async () => {
     bridge.shutdown();
     await metrics.shutdown();
@@ -883,6 +982,13 @@ export async function buildApp(): Promise<FastifyInstance> {
 if (await shouldRunFirstTimeSetup()) {
   await runInteractiveSetup();
   config = getConfig();
+}
+
+const instanceLock = new InstanceLock(config.dataDirectory);
+const lockAcquired = await instanceLock.acquire();
+if (!lockAcquired) {
+  console.warn('\n⚠️  Another instance of NodePilot appears to be running on this machine.');
+  console.warn('   If you are starting NodePilot again, check your existing process or system startup service.\n');
 }
 
 const app = await buildApp();
@@ -908,8 +1014,19 @@ try {
     console.log('  🔒 Security PIN: Active');
   }
   console.log('============================================================\n');
+
+  // Trigger auto-start for servers and Playit after port listening is established
+  void (app as unknown as { autoStart: AutoStartService }).autoStart.runBootSequence();
 } catch (error) {
   app.log.error(error);
   process.exitCode = 1;
   await app.close();
+  instanceLock.release();
 }
+
+process.once('SIGINT', () => {
+  instanceLock.release();
+});
+process.once('SIGTERM', () => {
+  instanceLock.release();
+});
