@@ -116,6 +116,23 @@ export interface PlayitStatus {
   error?: string | null;
 }
 
+export type TunnelStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+export interface ServerTunnel {
+  serverId: string;
+  tunnelId: string | null;
+  tunnelName: string | null;
+  publicAddress: string | null;
+  publicPort: number | null;
+  connectionAddress: string | null;
+  localPort: number;
+  status: TunnelStatus;
+  lastVerifiedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HostDiagnostics {
   pid: number;
   uptimeSeconds: number;

@@ -142,6 +142,7 @@ export interface CreateServerInput {
   eulaAccepted: boolean;
   javaPath?: string;
   memoryMb?: number;
+  enablePlayit?: boolean;
 }
 
 export interface UpdateServerInput {
@@ -413,6 +414,23 @@ export interface PlayitStatus {
   secretPath: string | null;
   claimUrl?: string | null;
   error?: string | null;
+}
+
+export type TunnelStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+export interface ServerTunnel {
+  serverId: string;
+  tunnelId: string | null;
+  tunnelName: string | null;
+  publicAddress: string | null;
+  publicPort: number | null;
+  connectionAddress: string | null;
+  localPort: number;
+  status: TunnelStatus;
+  lastVerifiedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface HostDiagnostics {

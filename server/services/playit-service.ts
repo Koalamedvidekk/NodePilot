@@ -1,6 +1,6 @@
 import { exec, spawn, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
-import { createWriteStream, existsSync } from 'node:fs';
+import { createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,16 @@ import { promisify } from 'node:util';
 import type { PlayitStatus } from '../types.js';
 
 const execAsync = promisify(exec);
+
+export interface ParsedPlayitTunnel {
+  id: string;
+  name: string | null;
+  tunnelType: string;
+  localPort: number | null;
+  publicAddress: string | null;
+  publicPort: number | null;
+  connectionAddress: string | null;
+}
 
 export class PlayitService {
   private childProcess: ChildProcess | null = null;
@@ -176,6 +186,128 @@ export class PlayitService {
       return path.join(localAppData, 'playit_gg', 'playit.toml');
     }
     return path.join(os.homedir(), '.config', 'playit_gg', 'playit.toml');
+  }
+
+  /**
+   * Read raw secret key string from playit.toml if present.
+   */
+  readSecretKey(): string | null {
+    const secretPath = this.getSecretPath();
+    if (!secretPath || !existsSync(secretPath)) {
+      return null;
+    }
+    try {
+      const content = readFileSync(secretPath, 'utf8');
+      const match = content.match(/secret_key\s*=\s*["']?([a-zA-Z0-9_-]+)["']?/);
+      return match ? match[1].trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Query tunnels list from api.playit.gg using the agent's secret key.
+   */
+  async fetchAccountTunnels(): Promise<ParsedPlayitTunnel[]> {
+    const secretKey = this.readSecretKey();
+    if (!secretKey) {
+      return [];
+    }
+
+    try {
+      const response = await fetch('https://api.playit.gg/v1/tunnels/list', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Agent-Key ${secretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const json = await response.json() as {
+        status: string;
+        data?: {
+          tunnels?: Array<{
+            id: string;
+            name?: string | null;
+            tunnel_type?: string;
+            origin?: {
+              details?: {
+                config_data?: {
+                  fields?: Array<{ name: string; value: string }>;
+                };
+              };
+            };
+            public_allocations?: Array<{
+              type: string;
+              details?: {
+                ip_hostname?: string;
+                auto_domain?: string;
+                port?: number;
+              };
+            }>;
+            connect_addresses?: Array<{
+              type: string;
+              value?: { address?: string };
+            }>;
+          }>;
+        };
+      };
+
+      if (json.status !== 'success' || !json.data?.tunnels) {
+        return [];
+      }
+
+      return json.data.tunnels.map((tunnel): ParsedPlayitTunnel => {
+        let localPort: number | null = null;
+        const fields = tunnel.origin?.details?.config_data?.fields;
+        if (Array.isArray(fields)) {
+          const portField = fields.find((f) => f.name === 'local_port');
+          if (portField && portField.value) {
+            const parsed = parseInt(portField.value, 10);
+            if (!isNaN(parsed)) localPort = parsed;
+          }
+        }
+
+        const portAlloc = tunnel.public_allocations?.find((a) => a.type === 'PortAllocation')?.details;
+        const publicAddress = portAlloc?.auto_domain || portAlloc?.ip_hostname || null;
+        const publicPort = typeof portAlloc?.port === 'number' ? portAlloc.port : null;
+
+        let connectionAddress: string | null = null;
+        const firstAuto = tunnel.connect_addresses?.find((c) => c.type === 'auto')?.value?.address;
+        if (firstAuto) {
+          connectionAddress = firstAuto;
+        } else if (publicAddress && publicPort) {
+          connectionAddress = `${publicAddress}:${publicPort}`;
+        } else if (publicAddress) {
+          connectionAddress = publicAddress;
+        }
+
+        return {
+          id: tunnel.id,
+          name: tunnel.name ?? null,
+          tunnelType: tunnel.tunnel_type ?? 'unknown',
+          localPort,
+          publicAddress,
+          publicPort,
+          connectionAddress,
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Find an existing tunnel that points to a specific local port.
+   */
+  async findTunnelForPort(localPort: number): Promise<ParsedPlayitTunnel | null> {
+    const tunnels = await this.fetchAccountTunnels();
+    return tunnels.find((t) => t.localPort === localPort) ?? null;
   }
 
   /**

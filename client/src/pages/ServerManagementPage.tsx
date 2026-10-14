@@ -6,6 +6,7 @@ import { PlayersPanel } from './PlayersPanel';
 import { UsagePanel } from './UsagePanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
+import { ServerTunnelCard } from '../components/ServerTunnelCard';
 import type { ConsoleLine, FileEntry, Server, ServerProperties } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
@@ -784,6 +785,7 @@ function OverviewPanel({ server, onAction, onMemorySave, actionBusy }: { server:
   const canStop = server.status === 'running' || server.status === 'starting';
   return (
     <div className="overview-grid">
+      <ServerTunnelCard server={server} />
       <section className="panel overview-card runtime-card">
         <div className="panel-heading"><div><h3>Runtime</h3><p>Local process controls</p></div><StatusBadge status={server.status} directoryMissing={server.directoryExists === false} /></div>
         <div className="runtime-status-art"><div className={`status-orb status-${server.status}`}><Icon name={server.status === 'running' ? 'activity' : 'server'} size={29} /></div><div><strong>{server.directoryExists === false ? 'Server files missing' : server.status === 'running' ? 'Server is online' : server.status === 'installing' ? 'Preparing server files' : 'Server is offline'}</strong><p>{server.directoryExists === false ? 'The server directory was deleted from disk.' : server.status === 'running' ? `Listening locally on port ${server.port ?? '—'}.` : server.error ?? 'Start it when you are ready.'}</p></div></div>

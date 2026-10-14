@@ -100,6 +100,23 @@ export function openDatabase(databasePath: string): SqliteDatabase {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS server_tunnels (
+      server_id TEXT PRIMARY KEY,
+      tunnel_id TEXT,
+      tunnel_name TEXT,
+      public_address TEXT,
+      public_port INTEGER,
+      connection_address TEXT,
+      local_port INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'disconnected',
+      last_verified_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS server_tunnels_local_port_idx ON server_tunnels(local_port);
   `);
 
   return database;

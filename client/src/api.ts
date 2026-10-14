@@ -33,6 +33,7 @@ import type {
   HostStartupStatus,
   PlayitStatus,
   HostDiagnostics,
+  ServerTunnel,
 } from './types';
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
@@ -756,6 +757,40 @@ export const api = {
       await request<{ ok: boolean; server: Server }>(`/servers/${encodeURIComponent(serverId)}/autostart`, {
         method: 'PUT',
         body: JSON.stringify({ autoStart }),
+      }),
+    );
+  },
+
+  async getServerTunnel(serverId: string): Promise<{ tunnel: ServerTunnel | null; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ tunnel: ServerTunnel | null; playit: PlayitStatus }>(
+        `/servers/${encodeURIComponent(serverId)}/tunnel`,
+      ),
+    );
+  },
+
+  async enableServerTunnel(serverId: string): Promise<{ ok: boolean; tunnel: ServerTunnel; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; tunnel: ServerTunnel; playit: PlayitStatus }>(
+        `/servers/${encodeURIComponent(serverId)}/tunnel/enable`,
+        { method: 'POST' },
+      ),
+    );
+  },
+
+  async verifyServerTunnel(serverId: string): Promise<{ ok: boolean; tunnel: ServerTunnel; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; tunnel: ServerTunnel; playit: PlayitStatus }>(
+        `/servers/${encodeURIComponent(serverId)}/tunnel/verify`,
+        { method: 'POST' },
+      ),
+    );
+  },
+
+  async removeServerTunnel(serverId: string): Promise<{ ok: boolean }> {
+    return unwrap(
+      await request<{ ok: boolean }>(`/servers/${encodeURIComponent(serverId)}/tunnel`, {
+        method: 'DELETE',
       }),
     );
   },

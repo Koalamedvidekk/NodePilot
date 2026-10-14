@@ -753,6 +753,7 @@ svg { display: block; flex: 0 0 auto; }
   .management-header-actions { width: 100%; justify-content: space-between; }
   .overview-grid { grid-template-columns: 1fr; }
   .activity-card { grid-column: auto; }
+  .tunnel-card { grid-column: auto; }
   .activity-list { grid-template-columns: 1fr; gap: 13px; }
   .activity-list > div, .activity-list > div:first-child { padding: 0; border: 0; }
   .usage-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1018,6 +1019,29 @@ svg { display: block; flex: 0 0 auto; }
   background: rgba(149, 162, 189, .12);
   color: var(--muted);
   border: 1px solid var(--line);
+}
+
+.status-pill.is-warning {
+  background: rgba(255, 209, 106, .14);
+  color: var(--yellow);
+  border: 1px solid rgba(255, 209, 106, .3);
+}
+
+.tunnel-card {
+  grid-column: span 2;
+}
+
+.tunnel-card .title-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tunnel-intro {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 16px;
 }
 
 .badge-positive {

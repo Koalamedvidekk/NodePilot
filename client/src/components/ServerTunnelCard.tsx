@@ -1,0 +1,316 @@
+import { useEffect, useState } from 'react';
+import { api } from '../api';
+import { Icon } from './Icon';
+import type { PlayitStatus, Server, ServerTunnel } from '../types';
+import { errorMessage } from '../utils';
+
+export function ServerTunnelCard({ server }: { server: Server }) {
+  const [tunnel, setTunnel] = useState<ServerTunnel | null>(null);
+  const [playit, setPlayit] = useState<PlayitStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string>();
+  const [success, setSuccess] = useState<string>();
+
+  const loadTunnel = async () => {
+    try {
+      setError(undefined);
+      const res = await api.getServerTunnel(server.id);
+      setTunnel(res.tunnel);
+      setPlayit(res.playit);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTunnel();
+    const interval = window.setInterval(() => {
+      void loadTunnel();
+    }, 12_000);
+    return () => window.clearInterval(interval);
+  }, [server.id]);
+
+  const handleCopy = async () => {
+    const addressToCopy = tunnel?.connectionAddress || (tunnel?.publicAddress ? (tunnel.publicPort ? `${tunnel.publicAddress}:${tunnel.publicPort}` : tunnel.publicAddress) : '');
+    if (!addressToCopy) return;
+
+    try {
+      await navigator.clipboard.writeText(addressToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2200);
+    } catch {
+      // Fallback
+    }
+  };
+
+  const handleEnable = async () => {
+    setActionBusy(true);
+    setError(undefined);
+    setSuccess(undefined);
+    try {
+      const res = await api.enableServerTunnel(server.id);
+      setTunnel(res.tunnel);
+      setPlayit(res.playit);
+      setSuccess('Playit tunnel enabled! Checking Playit configuration…');
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setActionBusy(true);
+    setError(undefined);
+    setSuccess(undefined);
+    try {
+      const res = await api.verifyServerTunnel(server.id);
+      setTunnel(res.tunnel);
+      setPlayit(res.playit);
+      if (res.tunnel.status === 'connected') {
+        setSuccess('Playit tunnel verified and connected!');
+      } else if (res.tunnel.publicAddress) {
+        setSuccess('Tunnel details updated.');
+      } else {
+        setSuccess('Checked Playit account. No tunnel found yet for this port.');
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!window.confirm('Remove this server’s Playit tunnel mapping? Your Minecraft world and server files will remain safe.')) {
+      return;
+    }
+    setActionBusy(true);
+    setError(undefined);
+    setSuccess(undefined);
+    try {
+      await api.removeServerTunnel(server.id);
+      setTunnel(null);
+      setSuccess('Playit tunnel association removed.');
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  if (loading && !tunnel) {
+    return (
+      <section className="panel overview-card tunnel-card">
+        <div className="panel-heading">
+          <div>
+            <h3>Playit.gg Public Tunnel</h3>
+            <p>Loading tunnel state…</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Not enabled for this server
+  if (!tunnel) {
+    return (
+      <section className="panel overview-card tunnel-card">
+        <div className="panel-heading">
+          <div className="title-with-icon">
+            <Icon name="wifi" size={20} />
+            <div>
+              <h3>Playit.gg Public Tunnel</h3>
+              <p>Internet multiplayer without port forwarding</p>
+            </div>
+          </div>
+          <span className="status-pill is-offline">Not Configured</span>
+        </div>
+        <div className="tunnel-card-body">
+          <p className="tunnel-intro">
+            Friends outside your local Wi-Fi can join your server directly without you having to open router ports or expose your home IP address.
+          </p>
+          {error && <div className="notice-banner is-error"><Icon name="warning" size={16} /><span>{error}</span></div>}
+          {success && <div className="notice-banner is-success"><Icon name="check" size={16} /><span>{success}</span></div>}
+          <div className="tunnel-actions-row">
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => void handleEnable()}
+              disabled={actionBusy}
+            >
+              <Icon name="wifi" size={16} />
+              <span>{actionBusy ? 'Configuring…' : 'Enable Public Tunnel with Playit.gg'}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const isConnected = tunnel.status === 'connected';
+  const isConnecting = tunnel.status === 'connecting';
+  const hasPublicAddress = Boolean(tunnel.publicAddress || tunnel.connectionAddress);
+
+  return (
+    <section className="panel overview-card tunnel-card">
+      <div className="panel-heading">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className={`status-orb status-${isConnected ? 'running' : isConnecting ? 'starting' : 'stopped'}`} style={{ width: '28px', height: '28px' }}>
+            <Icon name="wifi" size={16} />
+          </div>
+          <div>
+            <h3>Playit.gg Public Tunnel</h3>
+            <p>Public Internet Address &amp; Routing</p>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span className={`status-pill ${isConnected ? 'is-online' : isConnecting ? 'is-warning' : 'is-offline'}`}>
+            {isConnected
+              ? 'Tunnel Connected'
+              : isConnecting
+              ? 'Pending Playit Allocation'
+              : tunnel.status === 'error'
+              ? 'Setup Needed'
+              : 'Agent Disconnected'}
+          </span>
+        </div>
+      </div>
+
+      <div className="tunnel-card-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {error && (
+          <div className="notice-banner is-error">
+            <Icon name="warning" size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {success && (
+          <div className="notice-banner is-success">
+            <Icon name="check" size={16} />
+            <span>{success}</span>
+          </div>
+        )}
+
+        {/* Public Address Display Box */}
+        {hasPublicAddress ? (
+          <div className="public-address-banner" style={{ background: 'var(--card-bg-subtle, rgba(255,255,255,0.03))', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <small style={{ textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Public Connection Address</small>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                  <code style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--cyan, #38bdf8)' }}>
+                    {tunnel.connectionAddress || (tunnel.publicPort ? `${tunnel.publicAddress}:${tunnel.publicPort}` : tunnel.publicAddress)}
+                  </code>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`button ${copied ? 'button-primary' : 'button-secondary'}`}
+                onClick={() => void handleCopy()}
+                style={{ minWidth: '130px' }}
+              >
+                <Icon name={copied ? 'check' : 'copy'} size={16} />
+                <span>{copied ? 'Copied!' : 'Copy Address'}</span>
+              </button>
+            </div>
+            <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              Give this address to players outside your network. Players in Minecraft Java can paste this directly into Direct Connection or Server List.
+            </p>
+          </div>
+        ) : (
+          <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Icon name="info" size={18} />
+              <strong>Finish Playit Tunnel Setup</strong>
+            </div>
+            <p style={{ margin: 0 }}>
+              {tunnel.lastError || `NodePilot is waiting for a Playit tunnel targeting port ${tunnel.localPort}.`}
+            </p>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+              <a
+                href="https://playit.gg/manage/tunnels"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="button button-primary button-small"
+              >
+                <Icon name="arrowUpRight" size={14} />
+                <span>Open Playit Dashboard</span>
+              </a>
+              <button
+                type="button"
+                className="button button-secondary button-small"
+                onClick={() => void handleVerify()}
+                disabled={actionBusy}
+              >
+                <Icon name="refresh" size={14} />
+                <span>{actionBusy ? 'Verifying…' : 'Check / Verify Now'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Technical Tunnel Details Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Public Domain</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{tunnel.publicAddress || 'Allocating…'}</span>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Public Port</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{tunnel.publicPort ? String(tunnel.publicPort) : 'SRV / Default'}</span>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Target Local Port</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>127.0.0.1:{tunnel.localPort}</span>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Playit Agent</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{playit?.isRunning ? 'Running' : 'Stopped'}</span>
+          </div>
+        </div>
+
+        {/* Action Controls */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="button button-secondary button-small"
+              onClick={() => void handleVerify()}
+              disabled={actionBusy}
+              title="Re-query Playit API for matching tunnel updates"
+            >
+              <Icon name="refresh" size={14} />
+              <span>{actionBusy ? 'Checking…' : 'Re-verify Tunnel'}</span>
+            </button>
+            <a
+              href="https://playit.gg/manage/tunnels"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="button button-secondary button-small"
+              title="Manage tunnel routing and custom domains on Playit.gg"
+            >
+              <Icon name="arrowUpRight" size={14} />
+              <span>Manage on Playit.gg</span>
+            </a>
+          </div>
+
+          <button
+            type="button"
+            className="button button-danger-outline button-small"
+            onClick={() => void handleRemove()}
+            disabled={actionBusy}
+            title="Disconnect tunnel tracking from this server"
+          >
+            <Icon name="trash" size={14} />
+            <span>Remove Tunnel</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}

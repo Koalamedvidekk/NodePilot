@@ -48,8 +48,16 @@ export function CreateServerPage() {
   const [port, setPort] = useState('');
   const [memoryMb, setMemoryMb] = useState('2048');
   const [eulaAccepted, setEulaAccepted] = useState(false);
+  const [enablePlayit, setEnablePlayit] = useState(false);
+  const [playit, setPlayit] = useState<import('../types').PlayitStatus>();
   const [error, setError] = useState<string>();
   const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    void api.getHostSettings()
+      .then((res) => setPlayit(res.playit))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -153,6 +161,7 @@ export function CreateServerPage() {
         port: normalizedPort,
         memoryMb: normalizedMemory,
         eulaAccepted: true,
+        enablePlayit,
       });
       if (!server.id) throw new Error('The server was created, but NodePilot did not return its identifier.');
       navigate(`/servers/${encodeURIComponent(server.id)}`);
@@ -270,6 +279,29 @@ export function CreateServerPage() {
                 <span className="checkbox-mark"><Icon name="check" size={15} /></span>
                 <span><strong>I accept the Minecraft EULA</strong><small>By creating this server, you agree to the <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer">Minecraft End User License Agreement</a>. NodePilot will write this acceptance to this server only.</small></span>
               </label>
+
+              <label className={`eula-agreement ${enablePlayit ? 'is-accepted' : ''}`} style={{ marginTop: '14px' }}>
+                <input type="checkbox" checked={enablePlayit} onChange={(event) => setEnablePlayit(event.target.checked)} />
+                <span className="checkbox-mark"><Icon name="check" size={15} /></span>
+                <span>
+                  <strong>Create a public tunnel with Playit.gg</strong>
+                  <small>Lets friends connect to the Minecraft server over the internet without configuring router port forwarding.</small>
+                </span>
+              </label>
+
+              {enablePlayit && (
+                <div className="safe-note prominent-safe-note" style={{ borderColor: 'var(--cyan)' }}>
+                  <Icon name="wifi" size={17} />
+                  <span>
+                    {!playit?.installed
+                      ? 'Playit is not installed on this host yet. NodePilot will download the official CLI and guide you through 1-click activation.'
+                      : !playit.secretExists
+                      ? 'Your Playit account is not linked yet. NodePilot will guide you to complete linking on your new server page.'
+                      : 'Playit is active on this host. NodePilot will automatically map and verify the public tunnel address for this server.'}
+                  </span>
+                </div>
+              )}
+
               <div className="safe-note prominent-safe-note"><Icon name="check" size={17} /><span>This is a local-only installation. NodePilot does not upload your server files or EULA acceptance.</span></div>
             </div>
           )}

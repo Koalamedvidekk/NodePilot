@@ -23,6 +23,7 @@ import { ensureDirectory, managedServerDirectoryExists, resolveManagedServerRoot
 import { runInteractiveSetup, shouldRunFirstTimeSetup } from './setup.js';
 import { ServerRepository } from './repositories/server-repository.js';
 import { HostSettingsRepository } from './repositories/host-settings-repository.js';
+import { ServerTunnelRepository } from './repositories/server-tunnel-repository.js';
 import { FileService } from './services/file-service.js';
 import { JavaService } from './services/java-service.js';
 import { ImportService } from './services/import-service.js';
@@ -36,7 +37,8 @@ import { SystemService } from './services/system-service.js';
 import { StartupService } from './services/startup-service.js';
 import { PlayitService } from './services/playit-service.js';
 import { AutoStartService } from './services/auto-start-service.js';
-import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus } from './types.js';
+import { ServerTunnelService } from './services/server-tunnel-service.js';
+import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
 
 let config = getConfig();
 let currentListeningHost = config.host;
@@ -53,6 +55,7 @@ const createServerSchema = z.object({
   memoryMb: z.number().int().min(256).max(65_536).default(2_048),
   eulaAccepted: z.literal(true, { errorMap: () => ({ message: 'You must explicitly accept the Minecraft EULA.' }) }),
   javaPath: z.string().min(1).max(1_024).optional(),
+  enablePlayit: z.boolean().optional().default(false),
 }).refine((value) => Boolean(value.software ?? value.flavor), 'Choose a server software implementation.');
 const updateServerSchema = z.object({
   name: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f\r\n]/.test(value), 'Name cannot contain control characters.').optional(),
@@ -305,6 +308,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   const hostSettings = new HostSettingsRepository(database);
   const startup = new StartupService(hostSettings, path.resolve('.'));
   const playit = new PlayitService(config.dataDirectory);
+  const serverTunnelRepo = new ServerTunnelRepository(database);
+  const serverTunnels = new ServerTunnelService(serverTunnelRepo, repository, playit);
   const minecraft = new MinecraftService(repository, config.serversDirectory);
   const java = new JavaService();
   const runtime = new ServerRuntime(repository, config.serversDirectory);
@@ -530,6 +535,15 @@ export async function buildApp(): Promise<FastifyInstance> {
       const installed = await minecraft.install(created);
       created = repository.setRuntimeConfiguration(id, installed);
       const ready = repository.markReady(id);
+
+      if (input.enablePlayit) {
+        try {
+          await serverTunnels.reconcile(id, port);
+        } catch {
+          // As required: "If Playit setup fails, do not delete the newly created Minecraft server. Keep the server usable locally"
+        }
+      }
+
       return reply.code(201).send({ server: serializeServer(ready), javaWarning: usableJava.warning });
     } catch (error) {
       if (created) repository.markInstallFailed(id, errorMessage(error));
@@ -556,6 +570,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       }
     }
     const updated = repository.update(id, input);
+    if (input.port !== undefined && input.port !== current.port) {
+      await serverTunnels.handlePortChanged(id, input.port).catch(() => undefined);
+    }
     return { server: await serializeServerWithDiskCheck(updated, config.serversDirectory) };
   });
   app.delete('/api/servers/:id', async (request, reply) => {
@@ -574,6 +591,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         throw error;
       }
     }
+    await serverTunnels.remove(id).catch(() => undefined);
     repository.delete(id);
     return reply.code(204).send();
   });
@@ -939,6 +957,36 @@ export async function buildApp(): Promise<FastifyInstance> {
     const updated = repository.setAutoStart(id, mode as AutoStartMode);
     autoStart.log('info', `Server "${updated.name}" (${updated.id}) auto-start set to "${mode}".`);
     return { ok: true, server: await serializeServerWithDiskCheck(updated, config.serversDirectory) };
+  });
+
+  // Server Playit.gg Tunnel Management
+  app.get('/api/servers/:id/tunnel', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    requireServer(repository, id);
+    return serverTunnels.getStatus(id);
+  });
+
+  app.post('/api/servers/:id/tunnel/enable', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    requireServer(repository, id);
+    const result = await serverTunnels.enable(id);
+    autoStart.log('info', `Playit tunnel integration enabled for server ID ${id}.`);
+    return { ok: true, ...result };
+  });
+
+  app.post('/api/servers/:id/tunnel/verify', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    requireServer(repository, id);
+    const result = await serverTunnels.verify(id);
+    return { ok: true, ...result };
+  });
+
+  app.delete('/api/servers/:id/tunnel', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    requireServer(repository, id);
+    const ok = await serverTunnels.remove(id);
+    autoStart.log('info', `Playit tunnel association removed for server ID ${id}.`);
+    return { ok };
   });
 
   app.get('/api/bridge/connect', { websocket: true }, (socket, request) => {
