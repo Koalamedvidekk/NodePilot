@@ -133,6 +133,25 @@ Have an old laptop or desktop sitting around? You can turn it into a dedicated M
    - Click the **Local mode / LAN mode** pill in the top header or the host card in the sidebar footer to open the **Network & Remote Access** modal.
    - View your detected IP addresses, copy URLs with 1 click, switch between Local and LAN modes, or update your PIN without restarting manually.
 
+## ⚙️ Host Settings & System Startup (Boot Automation)
+
+NodePilot includes full host integration to run in the background on your PC or home server:
+
+1. **System Startup**:
+   - Open **Host Settings** from the sidebar navigation (`/settings`).
+   - Click **Enable Startup** to configure automatic boot startup.
+   - On **Windows**: Creates a per-user startup entry (`NodePilot-Startup.vbs`) requiring zero administrator privileges. Choose between **Headless** (silent background operation) and **Windowed** modes.
+   - On **Linux**: Installs and enables a user systemd service (`~/.config/systemd/user/nodepilot.service`).
+   - Optionally toggle **Open Browser on Startup** to automatically launch your default browser to NodePilot when the host boots.
+
+2. **Per-Server Auto-Start**:
+   - In **Host Settings**, toggle any server between **Always Start** and **Leave Stopped**.
+   - Marked servers start automatically and cleanly once NodePilot boots up.
+   - Auto-start coordinates with **Playit.gg** so public tunnel readiness and Minecraft server readiness are handled seamlessly.
+
+3. **Background Persistence**:
+   - NodePilot runs as an independent daemon. Closing your browser tab or window never terminates your running Minecraft servers.
+
 ## Creating a server
 
 1. Visit **Create server** and choose one of the supported server implementations.
