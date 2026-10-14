@@ -293,9 +293,9 @@ export class PlayitService {
   }
 
   /**
-   * Start account claim workflow: generates claim code, sets up claim URL,
-   * and runs background exchange so when the user approves on playit.gg, credentials write automatically
-   * and the Playit agent launches immediately to satisfy the 'Agent is offline' check on playit.gg.
+   * Start account claim workflow: spawns the playit agent in auto-run mode with stdout,
+   * captures the live claim URL issued by playit.gg, and keeps the agent process running
+   * so playit.gg immediately detects the agent as ONLINE when the user opens the page.
    */
   async claimAccount(): Promise<{ claimUrl: string; claimCode: string }> {
     const status = await this.getStatus();
@@ -303,44 +303,73 @@ export class PlayitService {
       throw new Error('Playit CLI must be installed before claiming an account.');
     }
 
-    // Generate random 10-hex claim code
-    const claimCode = crypto.randomBytes(5).toString('hex');
-    const claimUrl = `https://playit.gg/claim/${claimCode}`;
-    this.activeClaimUrl = claimUrl;
+    // Stop existing process if running to start fresh claim session
+    await this.stopAgent().catch(() => undefined);
 
-    // Terminate existing exchange process if any
     if (this.exchangeProcess && !this.exchangeProcess.killed) {
       try {
         this.exchangeProcess.kill();
       } catch {}
+      this.exchangeProcess = null;
     }
 
-    // Launch background exchange process waiting up to 300 seconds for user browser authorization
-    const exchange = spawn(status.binaryPath, ['claim', 'exchange', claimCode, '--wait', '300'], {
-      detached: false,
-      stdio: 'ignore',
-      windowsHide: true,
+    const binaryPath = status.binaryPath;
+
+    return new Promise<{ claimUrl: string; claimCode: string }>((resolve, reject) => {
+      let resolved = false;
+
+      const child: ChildProcess = spawn(binaryPath, ['--stdout'], {
+        detached: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            child.kill();
+          } catch {}
+          reject(new Error('Timed out waiting for Playit agent to connect and generate claim URL.'));
+        }
+      }, 30_000);
+
+      this.childProcess = child;
+
+      const handleOutput = (chunk: Buffer) => {
+        const text = chunk.toString();
+        const match = text.match(/https:\/\/playit\.gg\/claim\/([a-zA-Z0-9]+)/);
+        if (match && !resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          const claimUrl = match[0];
+          const claimCode = match[1];
+          this.activeClaimUrl = claimUrl;
+          resolve({ claimUrl, claimCode });
+        }
+      };
+
+      child.stdout?.on('data', handleOutput);
+      child.stderr?.on('data', handleOutput);
+
+      child.once('error', (err: Error) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          this.childProcess = null;
+          reject(err);
+        }
+      });
+
+      child.once('exit', () => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          this.childProcess = null;
+          reject(new Error('Playit agent exited before providing a claim URL.'));
+        }
+      });
     });
-
-    const secretPath = this.getSecretPath();
-    const pollInterval = setInterval(() => {
-      if (secretPath && existsSync(secretPath)) {
-        clearInterval(pollInterval);
-        this.startAgent().catch(() => undefined);
-      }
-    }, 1500);
-
-    exchange.once('exit', () => {
-      clearInterval(pollInterval);
-      this.exchangeProcess = null;
-      if (secretPath && existsSync(secretPath)) {
-        this.startAgent().catch(() => undefined);
-      }
-    });
-
-    this.exchangeProcess = exchange;
-
-    return { claimUrl, claimCode };
   }
 
   /**

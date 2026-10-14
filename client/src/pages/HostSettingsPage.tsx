@@ -476,7 +476,7 @@ export function HostSettingsPage() {
                   <p>
                     {playit.secretExists
                       ? 'Your Playit credentials are configured. Tunnels will automatically launch and link with your servers.'
-                      : 'Link this computer to your playit.gg account. Free accounts are limited to 2-3 agents—if you already reached your limit, use your existing secret key below.'}
+                      : 'Link this computer to your playit.gg account with 1 click. If playit.gg says you hit the agent limit (2 on free tier), delete any old unused agent on playit.gg first.'}
                   </p>
                 </div>
                 <div className="setting-action" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -487,7 +487,7 @@ export function HostSettingsPage() {
                     disabled={claimingPlayit}
                   >
                     <Icon name="arrowUpRight" size={16} />
-                    <span>{claimingPlayit ? 'Generating Link...' : (playit.secretExists ? 'Re-link New Agent' : 'Link Account (1-Click)')}</span>
+                    <span>{claimingPlayit ? 'Connecting Agent...' : (playit.secretExists ? 'Re-link New Agent' : 'Link Account (1-Click)')}</span>
                   </button>
 
                   <button
@@ -496,7 +496,7 @@ export function HostSettingsPage() {
                     onClick={() => setShowManualKeyInput((prev) => !prev)}
                   >
                     <Icon name="key" size={16} />
-                    <span>{showManualKeyInput ? 'Hide Secret Key Input' : 'Use Existing Secret Key'}</span>
+                    <span>{showManualKeyInput ? 'Hide Secret Key Input' : 'Enter Secret Key Manually'}</span>
                   </button>
 
                   {playit.secretExists && (
@@ -516,10 +516,11 @@ export function HostSettingsPage() {
 
             {showManualKeyInput && (
               <form onSubmit={(e) => void handleSaveSecretKey(e)} className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
-                <strong style={{ color: 'var(--cyan)' }}>🔑 Connect Using Existing Secret Key:</strong>
+                <strong style={{ color: 'var(--cyan)' }}>🔑 Enter Secret Key Manually:</strong>
                 <p>
-                  If you already have a Playit agent on your account, navigate to <strong>playit.gg &gt; Agents &gt; (Your Agent) &gt; Settings &gt; Show Secret Key</strong>.
-                  Paste the secret key here so NodePilot reuses your existing agent instead of hitting account agent limits.
+                  Use this only if you already have a secret key from an existing <code>playit.toml</code> file or server. 
+                  <em>(Note: the playit.gg website does not display secret keys on the web dashboard for security).</em> 
+                  If you don't have a key, use <strong>Link Account (1-Click)</strong> above.
                 </p>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                   <input
@@ -544,9 +545,10 @@ export function HostSettingsPage() {
 
             {(claimUrl || playit?.claimUrl) && !playit?.secretExists && (
               <div className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
-                <strong style={{ color: 'var(--cyan)' }}>🔗 Finish Linking Account in Browser:</strong>
+                <strong style={{ color: 'var(--cyan)' }}>🔗 Complete Account Setup in Browser:</strong>
                 <p>
-                  Click the link below to confirm the agent on playit.gg. Once approved in your browser, NodePilot automatically starts the agent daemon so the page updates to <strong>Online</strong>!
+                  Your Playit agent is running live on this computer. Click <strong>Open Link</strong> below to claim it on playit.gg. 
+                  Because NodePilot keeps the agent running in real time, playit.gg will detect it as <strong>Online</strong> immediately!
                 </p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
                   <code style={{ flex: 1 }}>{claimUrl || playit?.claimUrl}</code>
