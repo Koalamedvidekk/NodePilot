@@ -301,7 +301,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   repository.markInterruptedProcessesOffline();
   const hostSettings = new HostSettingsRepository(database);
   const startup = new StartupService(hostSettings, path.resolve('.'));
-  const playit = new PlayitService();
+  const playit = new PlayitService(config.dataDirectory);
   const minecraft = new MinecraftService(repository, config.serversDirectory);
   const java = new JavaService();
   const runtime = new ServerRuntime(repository, config.serversDirectory);
@@ -871,6 +871,24 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get('/api/host/playit', async () => {
     return { playit: await playit.getStatus() };
+  });
+
+  app.post('/api/host/playit/install', async () => {
+    autoStart.log('info', 'Downloading official Playit.gg agent binary...');
+    const status = await playit.installManagedBinary();
+    autoStart.log('info', `Playit.gg binary successfully installed (${status.version ?? 'ready'}).`);
+    return { ok: true, playit: status };
+  });
+
+  app.post('/api/host/playit/claim', async () => {
+    const claimResult = await playit.claimAccount();
+    autoStart.log('info', `Generated Playit account linking link: ${claimResult.claimUrl}`);
+    return {
+      ok: true,
+      claimUrl: claimResult.claimUrl,
+      claimCode: claimResult.claimCode,
+      playit: await playit.getStatus(),
+    };
   });
 
   app.post('/api/host/playit/start', async () => {

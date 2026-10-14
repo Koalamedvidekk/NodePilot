@@ -1,7 +1,11 @@
 import { exec, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import crypto from 'node:crypto';
+import { createWriteStream, existsSync } from 'node:fs';
+import { chmod, mkdir, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 
 import type { PlayitStatus } from '../types.js';
@@ -10,14 +14,114 @@ const execAsync = promisify(exec);
 
 export class PlayitService {
   private childProcess: ChildProcess | null = null;
+  private exchangeProcess: ChildProcess | null = null;
   private cachedBinaryPath: string | null = null;
+  private managedBinaryPath: string;
+  private activeClaimUrl: string | null = null;
+
+  constructor(private readonly dataDirectory?: string) {
+    const baseDir = this.dataDirectory || path.resolve('.nodepilot');
+    this.managedBinaryPath = path.join(
+      baseDir,
+      'bin',
+      os.platform() === 'win32' ? 'playit.exe' : 'playit',
+    );
+  }
+
+  /**
+   * Determine the official download URL for the host machine.
+   */
+  getDownloadUrl(): { url: string; fileName: string } | null {
+    const platform = os.platform();
+    const arch = os.arch();
+
+    if (platform === 'win32') {
+      if (arch === 'x64' || arch === 'arm64') {
+        return {
+          url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-windows-x86_64-signed.exe',
+          fileName: 'playit.exe',
+        };
+      }
+      return {
+        url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-windows-x86-signed.exe',
+        fileName: 'playit.exe',
+      };
+    }
+
+    if (platform === 'linux') {
+      if (arch === 'x64') {
+        return {
+          url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64',
+          fileName: 'playit',
+        };
+      }
+      if (arch === 'arm64' || arch === 'arm') {
+        return {
+          url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-aarch64',
+          fileName: 'playit',
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Automatically download and install Playit into .nodepilot/bin/
+   */
+  async installManagedBinary(): Promise<PlayitStatus> {
+    const download = this.getDownloadUrl();
+    if (!download) {
+      throw new Error(`Automatic Playit installation is not supported for ${os.platform()} (${os.arch()}).`);
+    }
+
+    await mkdir(path.dirname(this.managedBinaryPath), { recursive: true });
+    const tempFile = `${this.managedBinaryPath}.tmp-${Date.now()}`;
+
+    try {
+      const response = await fetch(download.url, { redirect: 'follow' });
+      if (!response.ok || !response.body) {
+        throw new Error(`Failed to download Playit agent from GitHub (${response.status} ${response.statusText}).`);
+      }
+
+      // @ts-ignore Node.js fetch ReadableStream compatibility
+      const nodeStream = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
+      await pipeline(nodeStream, createWriteStream(tempFile));
+
+      if (existsSync(this.managedBinaryPath)) {
+        await unlink(this.managedBinaryPath).catch(() => undefined);
+      }
+
+      const { rename } = await import('node:fs/promises');
+      await rename(tempFile, this.managedBinaryPath);
+
+      if (os.platform() !== 'win32') {
+        await chmod(this.managedBinaryPath, 0o755);
+      }
+
+      this.cachedBinaryPath = this.managedBinaryPath;
+      return this.getStatus();
+    } catch (err) {
+      await unlink(tempFile).catch(() => undefined);
+      throw new Error(`Playit installation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   /**
    * Locate the playit executable on the system.
+   * NodePilot's managed binary in .nodepilot/bin takes precedence.
    */
-  async findBinaryPath(): Promise<string | null> {
+  async findBinaryPath(): Promise<{ path: string; isManaged: boolean } | null> {
+    if (existsSync(this.managedBinaryPath)) {
+      this.cachedBinaryPath = this.managedBinaryPath;
+      return { path: this.managedBinaryPath, isManaged: true };
+    }
+
     if (this.cachedBinaryPath && existsSync(this.cachedBinaryPath)) {
-      return this.cachedBinaryPath;
+      return {
+        path: this.cachedBinaryPath,
+        isManaged: this.cachedBinaryPath === this.managedBinaryPath,
+      };
     }
 
     const platform = os.platform();
@@ -42,7 +146,7 @@ export class PlayitService {
     for (const candidate of candidatePaths) {
       if (existsSync(candidate)) {
         this.cachedBinaryPath = candidate;
-        return candidate;
+        return { path: candidate, isManaged: false };
       }
     }
 
@@ -53,7 +157,7 @@ export class PlayitService {
       const found = stdout.trim().split(/\r?\n/)[0]?.trim();
       if (found && existsSync(found)) {
         this.cachedBinaryPath = found;
-        return found;
+        return { path: found, isManaged: false };
       }
     } catch {
       // not in PATH
@@ -100,24 +204,26 @@ export class PlayitService {
    * Fetch current Playit installation and runtime status.
    */
   async getStatus(): Promise<PlayitStatus> {
-    const binaryPath = await this.findBinaryPath();
+    const binary = await this.findBinaryPath();
     const secretPath = this.getSecretPath();
     const secretExists = Boolean(secretPath && existsSync(secretPath));
 
-    if (!binaryPath) {
+    if (!binary) {
       return {
         installed: false,
+        isManaged: false,
         binaryPath: null,
         version: null,
         isRunning: false,
         secretExists,
         secretPath,
+        claimUrl: null,
       };
     }
 
     let version: string | null = null;
     try {
-      const { stdout } = await execAsync(`"${binaryPath}" version`);
+      const { stdout } = await execAsync(`"${binary.path}" version`);
       version = stdout.trim();
     } catch {
       // Older or customized versions might not return cleanly
@@ -127,12 +233,52 @@ export class PlayitService {
 
     return {
       installed: true,
-      binaryPath,
+      isManaged: binary.isManaged,
+      binaryPath: binary.path,
       version,
       isRunning,
       secretExists,
       secretPath,
+      claimUrl: this.activeClaimUrl,
     };
+  }
+
+  /**
+   * Start account claim workflow: generates claim code, sets up claim URL,
+   * and runs background exchange so when the user approves on playit.gg, credentials write automatically.
+   */
+  async claimAccount(): Promise<{ claimUrl: string; claimCode: string }> {
+    const status = await this.getStatus();
+    if (!status.installed || !status.binaryPath) {
+      throw new Error('Playit CLI must be installed before claiming an account.');
+    }
+
+    // Generate random 10-hex claim code
+    const claimCode = crypto.randomBytes(5).toString('hex');
+    const claimUrl = `https://playit.gg/claim/${claimCode}`;
+    this.activeClaimUrl = claimUrl;
+
+    // Terminate existing exchange process if any
+    if (this.exchangeProcess && !this.exchangeProcess.killed) {
+      try {
+        this.exchangeProcess.kill();
+      } catch {}
+    }
+
+    // Launch background exchange process waiting up to 300 seconds for user browser authorization
+    const exchange = spawn(status.binaryPath, ['claim', 'exchange', claimCode, '--wait', '300'], {
+      detached: false,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+
+    exchange.once('exit', () => {
+      this.exchangeProcess = null;
+    });
+
+    this.exchangeProcess = exchange;
+
+    return { claimUrl, claimCode };
   }
 
   /**
@@ -149,7 +295,7 @@ export class PlayitService {
     }
 
     try {
-      // Spawn unmanaged or background process
+      // Spawn unmanaged background daemon process
       const child = spawn(status.binaryPath, ['start'], {
         detached: true,
         stdio: 'ignore',

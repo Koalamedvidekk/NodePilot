@@ -136,6 +136,25 @@ test('StartupService provides valid paths and platform status', async () => {
   }
 });
 
+test('PlayitService correctly resolves managed binary path and download URL', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-playit-'));
+
+  try {
+    const playit = new PlayitService(tempDir);
+    const download = playit.getDownloadUrl();
+    if (['win32', 'linux'].includes(os.platform())) {
+      assert.ok(download !== null);
+      assert.ok(download.url.includes('playit-cloud/playit-agent/releases'));
+    }
+
+    const binary = await playit.findBinaryPath();
+    // System or null
+    assert.ok(binary === null || typeof binary.path === 'string');
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('AutoStartService records diagnostics and handles server autostart gracefully', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-auto-'));
   const dbPath = path.join(tempDir, 'test.sqlite');

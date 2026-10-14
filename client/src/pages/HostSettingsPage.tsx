@@ -115,6 +115,43 @@ export function HostSettingsPage() {
     }
   };
 
+  const [installingPlayit, setInstallingPlayit] = useState(false);
+  const [claimingPlayit, setClaimingPlayit] = useState(false);
+  const [claimUrl, setClaimUrl] = useState<string | null>(null);
+
+  const handleInstallPlayit = async () => {
+    setInstallingPlayit(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await api.installPlayit();
+      setPlayit(res.playit);
+      setSuccessMessage('Playit.gg agent successfully downloaded and ready to use!');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to install Playit agent.');
+    } finally {
+      setInstallingPlayit(false);
+    }
+  };
+
+  const handleClaimPlayit = async () => {
+    setClaimingPlayit(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await api.claimPlayitAccount();
+      setClaimUrl(res.claimUrl);
+      setPlayit(res.playit);
+      setSuccessMessage('Account linking code generated! Open the link below to connect with playit.gg.');
+      // Open in new tab automatically for maximum convenience
+      window.open(res.claimUrl, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate claim link.');
+    } finally {
+      setClaimingPlayit(false);
+    }
+  };
+
   const handlePlayitToggle = async () => {
     if (!playit) return;
     setTogglingPlayit(true);
@@ -340,12 +377,12 @@ export function HostSettingsPage() {
               <Icon name="wifi" size={20} />
               <div>
                 <h3>Playit.gg Tunnel Coordination</h3>
-                <p>Coordinate public tunnel availability separately from Minecraft game processes.</p>
+                <p>Create free public addresses for friends to join over the internet without port forwarding.</p>
               </div>
             </div>
             <div className="section-header-action">
-              <span className={`status-pill ${playit?.isRunning ? 'is-online' : 'is-offline'}`}>
-                {playit?.isRunning ? 'Agent Running' : 'Agent Stopped'}
+              <span className={`status-pill ${playit?.isRunning ? 'is-online' : (playit?.installed ? 'is-offline' : 'is-offline')}`}>
+                {!playit?.installed ? 'Not Installed' : (playit?.isRunning ? 'Agent Running' : 'Agent Stopped')}
               </span>
             </div>
           </div>
@@ -356,18 +393,29 @@ export function HostSettingsPage() {
                 <strong>Playit Agent CLI</strong>
                 <p>
                   {playit?.installed
-                    ? `Playit CLI found on host (Version ${playit.version ?? '0.17.1'}). NodePilot will auto-start tunnels on boot.`
-                    : 'Playit CLI is not detected in standard system locations or PATH.'}
+                    ? `Playit CLI ready (Version ${playit.version ?? 'latest'}). ${playit.isManaged ? 'Managed locally by NodePilot.' : 'Installed on host system.'}`
+                    : 'Download the official Playit standalone binary directly into NodePilot with 1 click (no admin privileges or installer needed).'}
                 </p>
                 {playit?.binaryPath && <code>{playit.binaryPath}</code>}
               </div>
               <div className="setting-action">
-                {playit?.installed && (
+                {!playit?.installed ? (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => void handleInstallPlayit()}
+                    disabled={installingPlayit}
+                  >
+                    <Icon name="plus" size={16} />
+                    <span>{installingPlayit ? 'Downloading Playit...' : 'Install Playit (1-Click)'}</span>
+                  </button>
+                ) : (
                   <button
                     type="button"
                     className={`button ${playit.isRunning ? 'button-secondary' : 'button-primary'}`}
                     onClick={() => void handlePlayitToggle()}
-                    disabled={togglingPlayit}
+                    disabled={togglingPlayit || !playit.secretExists}
+                    title={!playit.secretExists ? 'Link your Playit account first' : ''}
                   >
                     {togglingPlayit
                       ? 'Working...'
@@ -379,12 +427,56 @@ export function HostSettingsPage() {
               </div>
             </div>
 
+            {playit?.installed && (
+              <div className="setting-row">
+                <div className="setting-info">
+                  <strong>Playit Account Association</strong>
+                  <p>
+                    {playit.secretExists
+                      ? 'Your Playit credentials are configured. Tunnels will automatically launch and link with your servers.'
+                      : 'Link this computer to your playit.gg account so your public server URLs can be assigned.'}
+                  </p>
+                </div>
+                <div className="setting-action">
+                  <button
+                    type="button"
+                    className={`button ${playit.secretExists ? 'button-secondary' : 'button-primary'}`}
+                    onClick={() => void handleClaimPlayit()}
+                    disabled={claimingPlayit}
+                  >
+                    <Icon name="arrowUpRight" size={16} />
+                    <span>{claimingPlayit ? 'Generating Link...' : (playit.secretExists ? 'Re-link Account' : 'Link Account (1-Click)')}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(claimUrl || playit?.claimUrl) && !playit?.secretExists && (
+              <div className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
+                <strong style={{ color: 'var(--cyan)' }}>🔗 Finish Linking Account in Browser:</strong>
+                <p>
+                  Click the link below or button to confirm the agent on playit.gg. Once confirmed, NodePilot will automatically detect the credentials!
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
+                  <code style={{ flex: 1 }}>{claimUrl || playit?.claimUrl}</code>
+                  <a
+                    href={claimUrl || playit?.claimUrl || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="button button-primary button-small"
+                  >
+                    Open Link
+                  </a>
+                </div>
+              </div>
+            )}
+
             <div className="setting-detail-box">
               <strong>Account Secret Status:</strong>
               <p>
                 {playit?.secretExists
                   ? 'Credentials claimed. Playit tunnels will automatically establish connections when servers start.'
-                  : 'Playit secret file not found. Run playit claim in terminal once to associate with your account.'}
+                  : (playit?.installed ? 'Not yet linked. Click "Link Account (1-Click)" above to associate with your account.' : 'Install Playit above to get started.')}
               </p>
               {playit?.secretPath && <small>Config path: {playit.secretPath}</small>}
             </div>

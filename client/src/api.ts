@@ -695,6 +695,22 @@ export const api = {
     return res.playit;
   },
 
+  async installPlayit(): Promise<{ ok: boolean; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/install', {
+        method: 'POST',
+      }),
+    );
+  },
+
+  async claimPlayitAccount(): Promise<{ ok: boolean; claimUrl: string; claimCode: string; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; claimUrl: string; claimCode: string; playit: PlayitStatus }>('/host/playit/claim', {
+        method: 'POST',
+      }),
+    );
+  },
+
   async startPlayit(): Promise<{ ok: boolean; playit: PlayitStatus }> {
     return unwrap(
       await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/start', {

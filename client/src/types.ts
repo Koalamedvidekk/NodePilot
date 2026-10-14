@@ -405,11 +405,13 @@ export interface HostStartupStatus {
 
 export interface PlayitStatus {
   installed: boolean;
+  isManaged: boolean;
   binaryPath: string | null;
   version: string | null;
   isRunning: boolean;
   secretExists: boolean;
   secretPath: string | null;
+  claimUrl?: string | null;
   error?: string | null;
 }
 
