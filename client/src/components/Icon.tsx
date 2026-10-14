@@ -21,6 +21,7 @@ export type IconName =
   | 'folder'
   | 'info'
   | 'java'
+  | 'key'
   | 'lock'
   | 'menu'
   | 'more'
@@ -59,6 +60,7 @@ const paths: Record<IconName, React.ReactNode> = {
   folder: <path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></>,
   java: <><path d="M8.5 16c0 1.5 1.7 2.5 3.8 2.5s3.7-1 3.7-2.5" /><path d="M9 13.5c1.8.8 4.2.8 6 0" /><path d="M12 4c1.3 1.2-1 2.1.2 3.3 1.2 1.2-.9 2.1.3 3.2" /><path d="M7 20h10" /></>,
+  key: <><circle cx="7.5" cy="15.5" r="5.5" /><path d="m21 2-9.6 9.6" /><path d="m15.5 7.5 3 3" /><path d="m18.5 4.5 3 3" /></>,
   lock: <><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
   menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
   more: <><circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" /></>,

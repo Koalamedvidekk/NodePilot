@@ -118,6 +118,10 @@ export function HostSettingsPage() {
   const [installingPlayit, setInstallingPlayit] = useState(false);
   const [claimingPlayit, setClaimingPlayit] = useState(false);
   const [claimUrl, setClaimUrl] = useState<string | null>(null);
+  const [manualSecretKey, setManualSecretKey] = useState('');
+  const [savingSecretKey, setSavingSecretKey] = useState(false);
+  const [showManualKeyInput, setShowManualKeyInput] = useState(false);
+  const [resettingPlayit, setResettingPlayit] = useState(false);
 
   const handleInstallPlayit = async () => {
     setInstallingPlayit(true);
@@ -149,6 +153,44 @@ export function HostSettingsPage() {
       setError(err instanceof Error ? err.message : 'Failed to generate claim link.');
     } finally {
       setClaimingPlayit(false);
+    }
+  };
+
+  const handleSaveSecretKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualSecretKey.trim()) return;
+    setSavingSecretKey(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await api.setPlayitSecret(manualSecretKey.trim());
+      setPlayit(res.playit);
+      setManualSecretKey('');
+      setShowManualKeyInput(false);
+      setSuccessMessage('Playit secret key saved and tunnel agent launched!');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save Playit secret key.');
+    } finally {
+      setSavingSecretKey(false);
+    }
+  };
+
+  const handleResetPlayit = async () => {
+    if (!window.confirm('Are you sure you want to unlink and reset your Playit credentials on this host?')) {
+      return;
+    }
+    setResettingPlayit(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await api.resetPlayit();
+      setPlayit(res.playit);
+      setClaimUrl(null);
+      setSuccessMessage('Playit credentials removed. You can link a new account or paste an existing secret key.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset Playit credentials.');
+    } finally {
+      setResettingPlayit(false);
     }
   };
 
@@ -434,10 +476,10 @@ export function HostSettingsPage() {
                   <p>
                     {playit.secretExists
                       ? 'Your Playit credentials are configured. Tunnels will automatically launch and link with your servers.'
-                      : 'Link this computer to your playit.gg account so your public server URLs can be assigned.'}
+                      : 'Link this computer to your playit.gg account. Free accounts are limited to 2-3 agents—if you already reached your limit, use your existing secret key below.'}
                   </p>
                 </div>
-                <div className="setting-action">
+                <div className="setting-action" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     className={`button ${playit.secretExists ? 'button-secondary' : 'button-primary'}`}
@@ -445,17 +487,66 @@ export function HostSettingsPage() {
                     disabled={claimingPlayit}
                   >
                     <Icon name="arrowUpRight" size={16} />
-                    <span>{claimingPlayit ? 'Generating Link...' : (playit.secretExists ? 'Re-link Account' : 'Link Account (1-Click)')}</span>
+                    <span>{claimingPlayit ? 'Generating Link...' : (playit.secretExists ? 'Re-link New Agent' : 'Link Account (1-Click)')}</span>
                   </button>
+
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setShowManualKeyInput((prev) => !prev)}
+                  >
+                    <Icon name="key" size={16} />
+                    <span>{showManualKeyInput ? 'Hide Secret Key Input' : 'Use Existing Secret Key'}</span>
+                  </button>
+
+                  {playit.secretExists && (
+                    <button
+                      type="button"
+                      className="button button-danger"
+                      onClick={() => void handleResetPlayit()}
+                      disabled={resettingPlayit}
+                    >
+                      <Icon name="trash" size={16} />
+                      <span>{resettingPlayit ? 'Unlinking...' : 'Unlink / Reset Playit'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
+            )}
+
+            {showManualKeyInput && (
+              <form onSubmit={(e) => void handleSaveSecretKey(e)} className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
+                <strong style={{ color: 'var(--cyan)' }}>🔑 Connect Using Existing Secret Key:</strong>
+                <p>
+                  If you already have a Playit agent on your account, navigate to <strong>playit.gg &gt; Agents &gt; (Your Agent) &gt; Settings &gt; Show Secret Key</strong>.
+                  Paste the secret key here so NodePilot reuses your existing agent instead of hitting account agent limits.
+                </p>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <input
+                    type="password"
+                    className="input-field"
+                    placeholder="e.g. 6a6758fdd18898d9ba3c..."
+                    value={manualSecretKey}
+                    onChange={(e) => setManualSecretKey(e.target.value)}
+                    style={{ flex: 1 }}
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="button button-primary"
+                    disabled={savingSecretKey || !manualSecretKey.trim()}
+                  >
+                    {savingSecretKey ? 'Saving & Starting...' : 'Save & Connect'}
+                  </button>
+                </div>
+              </form>
             )}
 
             {(claimUrl || playit?.claimUrl) && !playit?.secretExists && (
               <div className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
                 <strong style={{ color: 'var(--cyan)' }}>🔗 Finish Linking Account in Browser:</strong>
                 <p>
-                  Click the link below or button to confirm the agent on playit.gg. Once confirmed, NodePilot will automatically detect the credentials!
+                  Click the link below to confirm the agent on playit.gg. Once approved in your browser, NodePilot automatically starts the agent daemon so the page updates to <strong>Online</strong>!
                 </p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
                   <code style={{ flex: 1 }}>{claimUrl || playit?.claimUrl}</code>
@@ -475,8 +566,8 @@ export function HostSettingsPage() {
               <strong>Account Secret Status:</strong>
               <p>
                 {playit?.secretExists
-                  ? 'Credentials claimed. Playit tunnels will automatically establish connections when servers start.'
-                  : (playit?.installed ? 'Not yet linked. Click "Link Account (1-Click)" above to associate with your account.' : 'Install Playit above to get started.')}
+                  ? 'Credentials active. Playit tunnels will automatically establish connections when servers start.'
+                  : (playit?.installed ? 'Not yet linked. Click "Link Account (1-Click)" or enter your existing secret key above.' : 'Install Playit above to get started.')}
               </p>
               {playit?.secretPath && <small>Config path: {playit.secretPath}</small>}
             </div>

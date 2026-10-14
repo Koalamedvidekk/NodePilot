@@ -155,6 +155,33 @@ test('PlayitService correctly resolves managed binary path and download URL', as
   }
 });
 
+test('PlayitService setSecretKey and resetSecret handle credentials cleanly', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-playit-sec-'));
+  const fakeSecretPath = path.join(tempDir, 'playit.toml');
+
+  try {
+    const playit = new PlayitService(tempDir);
+    // Monkey-patch getSecretPath to use our temp location
+    playit.getSecretPath = () => fakeSecretPath;
+
+    // Reject empty
+    await assert.rejects(async () => playit.setSecretKey('   '), /cannot be empty/);
+
+    // Save key
+    await playit.setSecretKey('test-secret-key-12345').catch(() => undefined);
+    const { readFile } = await import('node:fs/promises');
+    const content = await readFile(fakeSecretPath, 'utf8');
+    assert.ok(content.includes('secret_key = "test-secret-key-12345"'));
+
+    // Reset key
+    await playit.resetSecret();
+    const { existsSync } = await import('node:fs');
+    assert.equal(existsSync(fakeSecretPath), false);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('AutoStartService records diagnostics and handles server autostart gracefully', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-auto-'));
   const dbPath = path.join(tempDir, 'test.sqlite');

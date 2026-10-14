@@ -727,6 +727,23 @@ export const api = {
     );
   },
 
+  async setPlayitSecret(secretKey: string): Promise<{ ok: boolean; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/secret', {
+        method: 'POST',
+        body: JSON.stringify({ secretKey }),
+      }),
+    );
+  },
+
+  async resetPlayit(): Promise<{ ok: boolean; playit: PlayitStatus }> {
+    return unwrap(
+      await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/reset', {
+        method: 'POST',
+      }),
+    );
+  },
+
   async getHostDiagnostics(): Promise<HostDiagnostics> {
     return unwrap(await request<HostDiagnostics>('/host/diagnostics'));
   },

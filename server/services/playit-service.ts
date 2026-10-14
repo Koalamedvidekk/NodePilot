@@ -244,8 +244,58 @@ export class PlayitService {
   }
 
   /**
+   * Directly save or replace the Playit secret key in playit.toml, then launch the agent.
+   * This solves the issue of users hitting the max agent limit on existing Playit accounts.
+   */
+  async setSecretKey(secretKey: string): Promise<PlayitStatus> {
+    const trimmed = secretKey.trim();
+    if (!trimmed) {
+      throw new Error('Secret key cannot be empty.');
+    }
+
+    const secretPath = this.getSecretPath();
+    if (!secretPath) {
+      throw new Error('Could not resolve Playit configuration path on this operating system.');
+    }
+
+    // Stop currently running agent if any before modifying credentials
+    await this.stopAgent().catch(() => undefined);
+
+    await mkdir(path.dirname(secretPath), { recursive: true });
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(secretPath, `secret_key = "${trimmed}"\n`, 'utf8');
+
+    // Auto-launch the agent daemon now that key is configured
+    return this.startAgent();
+  }
+
+  /**
+   * Reset / unlink Playit credentials by stopping any active agent and removing playit.toml.
+   */
+  async resetSecret(): Promise<PlayitStatus> {
+    await this.stopAgent().catch(() => undefined);
+
+    if (this.exchangeProcess && !this.exchangeProcess.killed) {
+      try {
+        this.exchangeProcess.kill();
+      } catch {}
+      this.exchangeProcess = null;
+    }
+
+    this.activeClaimUrl = null;
+
+    const secretPath = this.getSecretPath();
+    if (secretPath && existsSync(secretPath)) {
+      await unlink(secretPath).catch(() => undefined);
+    }
+
+    return this.getStatus();
+  }
+
+  /**
    * Start account claim workflow: generates claim code, sets up claim URL,
-   * and runs background exchange so when the user approves on playit.gg, credentials write automatically.
+   * and runs background exchange so when the user approves on playit.gg, credentials write automatically
+   * and the Playit agent launches immediately to satisfy the 'Agent is offline' check on playit.gg.
    */
   async claimAccount(): Promise<{ claimUrl: string; claimCode: string }> {
     const status = await this.getStatus();
@@ -272,8 +322,20 @@ export class PlayitService {
       windowsHide: true,
     });
 
+    const secretPath = this.getSecretPath();
+    const pollInterval = setInterval(() => {
+      if (secretPath && existsSync(secretPath)) {
+        clearInterval(pollInterval);
+        this.startAgent().catch(() => undefined);
+      }
+    }, 1500);
+
     exchange.once('exit', () => {
+      clearInterval(pollInterval);
       this.exchangeProcess = null;
+      if (secretPath && existsSync(secretPath)) {
+        this.startAgent().catch(() => undefined);
+      }
     });
 
     this.exchangeProcess = exchange;

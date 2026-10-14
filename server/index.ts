@@ -107,6 +107,9 @@ const hostStartupEnableSchema = z.object({
 const serverAutoStartSchema = z.object({
   autoStart: z.enum(['always', 'disabled']),
 });
+const playitSecretSchema = z.object({
+  secretKey: z.string().trim().min(1).max(256),
+});
 const commandSchema = z.object({ command: z.string().min(1).max(500) });
 const versionQuerySchema = z.object({ flavor: flavorSchema.optional(), software: softwareSchema.optional() }).refine(
   (value) => Boolean(value.software ?? value.flavor),
@@ -900,6 +903,19 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.post('/api/host/playit/stop', async () => {
     const status = await playit.stopAgent();
     autoStart.log('info', 'User stopped Playit.gg agent via Host Settings.');
+    return { ok: true, playit: status };
+  });
+
+  app.post('/api/host/playit/secret', async (request) => {
+    const { secretKey } = playitSecretSchema.parse(request.body);
+    const status = await playit.setSecretKey(secretKey);
+    autoStart.log('info', 'User saved Playit.gg secret key directly. Agent started.');
+    return { ok: true, playit: status };
+  });
+
+  app.post('/api/host/playit/reset', async () => {
+    const status = await playit.resetSecret();
+    autoStart.log('info', 'User unlinked / reset Playit.gg credentials.');
     return { ok: true, playit: status };
   });
 
