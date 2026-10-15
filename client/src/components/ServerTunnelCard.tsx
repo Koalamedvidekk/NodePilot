@@ -10,6 +10,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedPort, setCopiedPort] = useState(false);
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
 
@@ -26,13 +27,16 @@ export function ServerTunnelCard({ server }: { server: Server }) {
     }
   };
 
+  const hasPublicAddress = Boolean(tunnel?.publicAddress || tunnel?.connectionAddress);
+
   useEffect(() => {
     void loadTunnel();
+    // Fast polling (3.5s) while waiting for tunnel creation, relaxed (15s) once connected
     const interval = window.setInterval(() => {
       void loadTunnel();
-    }, 12_000);
+    }, hasPublicAddress ? 15_000 : 3_500);
     return () => window.clearInterval(interval);
-  }, [server.id]);
+  }, [server.id, hasPublicAddress]);
 
   const handleCopy = async () => {
     const addressToCopy = tunnel?.connectionAddress || (tunnel?.publicAddress ? (tunnel.publicPort ? `${tunnel.publicAddress}:${tunnel.publicPort}` : tunnel.publicAddress) : '');
@@ -42,6 +46,17 @@ export function ServerTunnelCard({ server }: { server: Server }) {
       await navigator.clipboard.writeText(addressToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 2200);
+    } catch {
+      // Fallback
+    }
+  };
+
+  const handleCopyPort = async () => {
+    if (!tunnel?.localPort) return;
+    try {
+      await navigator.clipboard.writeText(String(tunnel.localPort));
+      setCopiedPort(true);
+      setTimeout(() => setCopiedPort(false), 2200);
     } catch {
       // Fallback
     }
@@ -154,7 +169,6 @@ export function ServerTunnelCard({ server }: { server: Server }) {
 
   const isConnected = tunnel.status === 'connected';
   const isConnecting = tunnel.status === 'connecting';
-  const hasPublicAddress = Boolean(tunnel.publicAddress || tunnel.connectionAddress);
 
   return (
     <section className="panel overview-card tunnel-card">
@@ -173,7 +187,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
             {isConnected
               ? 'Tunnel Connected'
               : isConnecting
-              ? 'Pending Playit Allocation'
+              ? 'Pending Playit Tunnel Creation'
               : tunnel.status === 'error'
               ? 'Setup Needed'
               : 'Agent Disconnected'}
@@ -223,33 +237,46 @@ export function ServerTunnelCard({ server }: { server: Server }) {
             </p>
           </div>
         ) : (
-          <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255, 209, 106, 0.35)', background: 'rgba(255, 209, 106, 0.08)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Icon name="info" size={18} />
-              <strong>Finish Playit Tunnel Setup</strong>
+              <strong style={{ fontSize: '15px' }}>Action Required: Add Tunnel on Playit.gg</strong>
             </div>
-            <p style={{ margin: 0 }}>
-              {tunnel.lastError || `NodePilot is waiting for a Playit tunnel targeting port ${tunnel.localPort}.`}
+            <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.5 }}>
+              Playit requires creating the tunnel once in your account so their global proxy allocates your public IP/domain.
+              Add a tunnel pointing to this server’s local port <code style={{ fontSize: '14px', fontWeight: 700, background: 'rgba(255,255,255,0.12)', padding: '2px 7px', borderRadius: '4px' }}>{tunnel.localPort}</code>:
             </p>
-            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
               <a
-                href="https://playit.gg/manage/tunnels"
+                href="https://playit.gg/account/tunnels/create"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="button button-primary button-small"
+                className="button button-primary"
               >
-                <Icon name="arrowUpRight" size={14} />
-                <span>Open Playit Dashboard</span>
+                <Icon name="arrowUpRight" size={15} />
+                <span>Add Tunnel on Playit.gg (Port {tunnel.localPort})</span>
               </a>
               <button
                 type="button"
-                className="button button-secondary button-small"
+                className="button button-secondary"
+                onClick={() => void handleCopyPort()}
+                title="Copy local port number to clipboard"
+              >
+                <Icon name={copiedPort ? 'check' : 'copy'} size={15} />
+                <span>{copiedPort ? 'Port Copied!' : `Copy Port ${tunnel.localPort}`}</span>
+              </button>
+              <button
+                type="button"
+                className="button button-secondary"
                 onClick={() => void handleVerify()}
                 disabled={actionBusy}
               >
                 <Icon name="refresh" size={14} />
-                <span>{actionBusy ? 'Verifying…' : 'Check / Verify Now'}</span>
+                <span>{actionBusy ? 'Checking…' : 'Check / Verify Now'}</span>
               </button>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px' }}>
+              💡 <strong>Quick Steps:</strong> 1. Click button above &bull; 2. Select <strong>Minecraft Java</strong> &bull; 3. Enter Port <strong>{tunnel.localPort}</strong> &bull; 4. Click Add Tunnel. NodePilot will automatically detect it within seconds!
             </div>
           </div>
         )}
@@ -258,11 +285,15 @@ export function ServerTunnelCard({ server }: { server: Server }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
           <div className="metric-chip">
             <span className="metric-chip-label">Public Domain</span>
-            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{tunnel.publicAddress || 'Allocating…'}</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>
+              {tunnel.publicAddress || (isConnected ? 'Allocating…' : 'Needs creation on Playit')}
+            </span>
           </div>
           <div className="metric-chip">
             <span className="metric-chip-label">Public Port</span>
-            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{tunnel.publicPort ? String(tunnel.publicPort) : 'SRV / Default'}</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>
+              {tunnel.publicPort ? String(tunnel.publicPort) : hasPublicAddress ? 'SRV / Default' : 'Assigned after creation'}
+            </span>
           </div>
           <div className="metric-chip">
             <span className="metric-chip-label">Target Local Port</span>
@@ -288,7 +319,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
               <span>{actionBusy ? 'Checking…' : 'Re-verify Tunnel'}</span>
             </button>
             <a
-              href="https://playit.gg/manage/tunnels"
+              href="https://playit.gg/account/tunnels"
               target="_blank"
               rel="noopener noreferrer"
               className="button button-secondary button-small"
