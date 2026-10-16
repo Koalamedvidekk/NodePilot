@@ -248,13 +248,13 @@ export function ServerTunnelCard({ server }: { server: Server }) {
             </p>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
               <a
-                href="https://playit.gg/account/tunnels/create"
+                href="https://playit.gg/account/setup/new-tunnel"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="button button-primary"
               >
                 <Icon name="arrowUpRight" size={15} />
-                <span>Add Tunnel on Playit.gg (Port {tunnel.localPort})</span>
+                <span>Open Playit Tunnel Setup (Port {tunnel.localPort})</span>
               </a>
               <button
                 type="button"
@@ -265,6 +265,15 @@ export function ServerTunnelCard({ server }: { server: Server }) {
                 <Icon name={copiedPort ? 'check' : 'copy'} size={15} />
                 <span>{copiedPort ? 'Port Copied!' : `Copy Port ${tunnel.localPort}`}</span>
               </button>
+              <a
+                href="https://playit.gg/account/tunnels"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="button button-secondary"
+                title="View all tunnels on Playit.gg"
+              >
+                <span>View Tunnels</span>
+              </a>
               <button
                 type="button"
                 className="button button-secondary"
