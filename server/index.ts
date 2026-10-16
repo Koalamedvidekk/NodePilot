@@ -614,6 +614,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     const updated = action === 'start'
       ? await runtime.start(server, usableJava.installation.path, usableJava.warning)
       : await runtime.restart(server, usableJava.installation.path, usableJava.warning);
+
+    if (action === 'start' || action === 'restart') {
+      const associatedTunnel = serverTunnelRepo.find(server.id);
+      if (associatedTunnel) {
+        serverTunnels.reconcile(server.id, server.port).catch(() => undefined);
+      }
+    }
+
     return { server: await serializeServerWithDiskCheck(updated, config.serversDirectory) };
   }
   app.post('/api/servers/:id/start', async (request) => runLifecycle(request, 'start'));

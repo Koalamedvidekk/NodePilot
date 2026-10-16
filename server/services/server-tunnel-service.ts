@@ -15,10 +15,19 @@ export class ServerTunnelService {
    */
   async getStatus(serverId: string): Promise<{ tunnel: ServerTunnel | null; playit: PlayitStatus }> {
     const tunnel = this.repository.find(serverId);
-    const playit = await this.playit.getStatus();
+    let playit = await this.playit.getStatus();
 
     if (!tunnel) {
       return { tunnel: null, playit };
+    }
+
+    // Auto-revive agent if tunnel is configured, credentials exist, but process is currently stopped
+    if (!playit.isRunning && tunnel.tunnelId && playit.installed && playit.secretExists) {
+      try {
+        playit = await this.playit.startAgent();
+      } catch {
+        // ignore background attempt, will report actual state below
+      }
     }
 
     // Live status check: if agent is stopped, tunnel cannot be connected

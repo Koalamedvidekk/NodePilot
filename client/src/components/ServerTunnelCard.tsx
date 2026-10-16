@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { Icon } from './Icon';
 import type { PlayitStatus, Server, ServerTunnel } from '../types';
@@ -29,6 +29,19 @@ export function ServerTunnelCard({ server }: { server: Server }) {
 
   const hasPublicAddress = Boolean(tunnel?.publicAddress || tunnel?.connectionAddress);
 
+  const effectiveAddress = useMemo(() => {
+    if (!tunnel) return '';
+    const host = tunnel.publicAddress || tunnel.connectionAddress;
+    if (!host) return '';
+    if (tunnel.publicPort && tunnel.publicPort !== 25565) {
+      if (tunnel.connectionAddress && tunnel.connectionAddress.includes(':')) {
+        return tunnel.connectionAddress;
+      }
+      return `${host.replace(/:.*$/, '')}:${tunnel.publicPort}`;
+    }
+    return tunnel.connectionAddress || host;
+  }, [tunnel]);
+
   useEffect(() => {
     void loadTunnel();
     // Fast polling (3.5s) while waiting for tunnel creation, relaxed (15s) once connected
@@ -39,11 +52,10 @@ export function ServerTunnelCard({ server }: { server: Server }) {
   }, [server.id, hasPublicAddress]);
 
   const handleCopy = async () => {
-    const addressToCopy = tunnel?.connectionAddress || (tunnel?.publicAddress ? (tunnel.publicPort ? `${tunnel.publicAddress}:${tunnel.publicPort}` : tunnel.publicAddress) : '');
-    if (!addressToCopy) return;
+    if (!effectiveAddress) return;
 
     try {
-      await navigator.clipboard.writeText(addressToCopy);
+      await navigator.clipboard.writeText(effectiveAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2200);
     } catch {
@@ -218,7 +230,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
                 <small style={{ textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Public Connection Address</small>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
                   <code style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--cyan, #38bdf8)' }}>
-                    {tunnel.connectionAddress || (tunnel.publicPort ? `${tunnel.publicAddress}:${tunnel.publicPort}` : tunnel.publicAddress)}
+                    {effectiveAddress}
                   </code>
                 </div>
               </div>
@@ -235,6 +247,18 @@ export function ServerTunnelCard({ server }: { server: Server }) {
             <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
               Give this address to players outside your network. Players in Minecraft Java can paste this directly into Direct Connection or Server List.
             </p>
+            {server.status !== 'running' && (
+              <div style={{ marginTop: '10px', fontSize: '12.5px', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Icon name="info" size={14} />
+                <span>Minecraft server is currently {server.status}. Start the server above so friends connecting through Playit can join.</span>
+              </div>
+            )}
+            {!playit?.isRunning && (
+              <div style={{ marginTop: '8px', fontSize: '12.5px', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Icon name="warning" size={14} />
+                <span>Playit agent is currently offline. Click <strong>Re-verify Tunnel</strong> below to launch it.</span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255, 209, 106, 0.35)', background: 'rgba(255, 209, 106, 0.08)' }}>
@@ -291,7 +315,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
         )}
 
         {/* Technical Tunnel Details Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
           <div className="metric-chip">
             <span className="metric-chip-label">Public Domain</span>
             <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>
@@ -311,6 +335,14 @@ export function ServerTunnelCard({ server }: { server: Server }) {
           <div className="metric-chip">
             <span className="metric-chip-label">Playit Agent</span>
             <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{playit?.isRunning ? 'Running' : 'Stopped'}</span>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Minecraft Server</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>
+              <span className={`status-pill ${server.status === 'running' ? 'is-online' : 'is-offline'}`} style={{ padding: '2px 8px', fontSize: '11px' }}>
+                {server.status.toUpperCase()}
+              </span>
+            </span>
           </div>
         </div>
 

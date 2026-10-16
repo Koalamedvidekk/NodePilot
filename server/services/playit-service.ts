@@ -279,12 +279,13 @@ export class PlayitService {
 
         let connectionAddress: string | null = null;
         const firstAuto = tunnel.connect_addresses?.find((c) => c.type === 'auto')?.value?.address;
-        if (firstAuto) {
-          connectionAddress = firstAuto;
+        const host = firstAuto || publicAddress;
+        if (host && publicPort && publicPort !== 25565) {
+          connectionAddress = host.includes(':') ? host : `${host}:${publicPort}`;
+        } else if (host) {
+          connectionAddress = host;
         } else if (publicAddress && publicPort) {
           connectionAddress = `${publicAddress}:${publicPort}`;
-        } else if (publicAddress) {
-          connectionAddress = publicAddress;
         }
 
         return {
@@ -314,8 +315,11 @@ export class PlayitService {
    * Check if playit process is currently running on the host.
    */
   async isProcessRunning(): Promise<boolean> {
-    if (this.childProcess && !this.childProcess.killed) {
+    if (this.childProcess && this.childProcess.exitCode === null && !this.childProcess.killed) {
       return true;
+    }
+    if (this.childProcess && (this.childProcess.exitCode !== null || this.childProcess.killed)) {
+      this.childProcess = null;
     }
 
     const platform = os.platform();
@@ -518,11 +522,33 @@ export class PlayitService {
     }
 
     try {
-      // Spawn unmanaged background daemon process
-      const child = spawn(status.binaryPath, ['start'], {
+      const secretPath = this.getSecretPath();
+      const baseDir = this.dataDirectory || path.resolve('.nodepilot');
+      await mkdir(baseDir, { recursive: true }).catch(() => undefined);
+      const logPath = path.join(baseDir, 'playit.log');
+
+      const args: string[] = [];
+      if (secretPath && existsSync(secretPath)) {
+        args.push('--secret_path', secretPath);
+      }
+      args.push('-l', logPath, 'start');
+
+      // Spawn daemon process writing logs to playit.log
+      const child = spawn(status.binaryPath, args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
+      });
+
+      child.on('exit', () => {
+        if (this.childProcess === child) {
+          this.childProcess = null;
+        }
+      });
+      child.on('error', () => {
+        if (this.childProcess === child) {
+          this.childProcess = null;
+        }
       });
 
       child.unref();
