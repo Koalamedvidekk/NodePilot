@@ -1047,12 +1047,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   if (await clientBuildExists()) {
-    await app.register(fastifyStatic, { root: config.clientDistDirectory, wildcard: false });
-    app.get('/*', async (request, reply) => {
+    await app.register(fastifyStatic, { root: config.clientDistDirectory });
+    app.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith('/api/')) {
         return reply.code(404).send({ error: 'not_found', message: 'The requested API resource was not found.' });
       }
-      if (request.method === 'GET' && request.headers.accept?.includes('text/html')) return reply.sendFile('index.html');
+      if (request.method === 'GET' && (request.headers.accept?.includes('text/html') || !path.extname(request.url))) {
+        return reply.sendFile('index.html');
+      }
       return reply.code(404).send({ error: 'not_found', message: 'The requested resource was not found.' });
     });
   } else {

@@ -33,6 +33,13 @@ function NavItem({ item, onClick }: { item: NavigationItem; onClick?: () => void
   );
 }
 
+const bottomNavItems: Array<{ label: string; to: string; icon: IconName; isPrimary?: boolean; end?: boolean }> = [
+  { label: 'Overview', to: '/', icon: 'dashboard', end: true },
+  { label: 'Servers', to: '/servers', icon: 'server', end: true },
+  { label: 'New', to: '/servers/new', icon: 'plus', isPrimary: true },
+  { label: 'Settings', to: '/settings', icon: 'settings', end: true },
+];
+
 function titleForPath(pathname: string): string {
   if (pathname === '/') return 'Overview';
   if (pathname === '/servers') return 'Servers';
@@ -150,11 +157,33 @@ export function AppShell({ children }: { children: ReactNode }) {
               title={network?.requiresRestart ? 'Restart in terminal (npm start) to apply changes' : 'Click to view network access URLs'}
             >
               {network?.requiresRestart ? <Icon name="warning" size={13} /> : (network?.isNetworkVisible ? <Icon name="wifi" size={13} /> : <span />)}
-              {network?.requiresRestart ? 'Restart needed' : (network?.isNetworkVisible ? 'LAN mode' : 'Local mode')}
+              <span className="connection-text-desktop">
+                {network?.requiresRestart ? 'Restart needed' : (network?.isNetworkVisible ? 'LAN mode' : 'Local mode')}
+              </span>
+              <span className="connection-text-mobile">
+                {network?.requiresRestart ? 'Restart' : (network?.isNetworkVisible ? 'LAN' : 'Local')}
+              </span>
             </button>
           </div>
         </header>
+
         <div className="content-area">{children}</div>
+
+        <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+          {bottomNavItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => `mobile-nav-link ${isActive ? 'is-active' : ''} ${item.isPrimary ? 'is-primary' : ''}`}
+            >
+              <span className="mobile-nav-icon">
+                <Icon name={item.icon} size={item.isPrimary ? 21 : 19} />
+              </span>
+              <span className="mobile-nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
       </main>
     </div>
   );

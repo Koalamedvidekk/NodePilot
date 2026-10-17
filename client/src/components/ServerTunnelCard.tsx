@@ -224,37 +224,36 @@ export function ServerTunnelCard({ server }: { server: Server }) {
 
         {/* Public Address Display Box */}
         {hasPublicAddress ? (
-          <div className="public-address-banner" style={{ background: 'var(--card-bg-subtle, rgba(255,255,255,0.03))', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-              <div>
-                <small style={{ textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Public Connection Address</small>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
-                  <code style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--cyan, #38bdf8)' }}>
+          <div className="public-address-banner">
+            <div className="public-address-row">
+              <div className="public-address-info">
+                <small className="public-address-tag">Public Connection Address</small>
+                <div className="public-address-code-wrap">
+                  <code className="public-address-code">
                     {effectiveAddress}
                   </code>
                 </div>
               </div>
               <button
                 type="button"
-                className={`button ${copied ? 'button-primary' : 'button-secondary'}`}
+                className={`button ${copied ? 'button-primary' : 'button-secondary'} public-address-copy-btn`}
                 onClick={() => void handleCopy()}
-                style={{ minWidth: '130px' }}
               >
                 <Icon name={copied ? 'check' : 'copy'} size={16} />
                 <span>{copied ? 'Copied!' : 'Copy Address'}</span>
               </button>
             </div>
-            <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            <p className="public-address-caption">
               Give this address to players outside your network. Players in Minecraft Java can paste this directly into Direct Connection or Server List.
             </p>
             {server.status !== 'running' && (
-              <div style={{ marginTop: '10px', fontSize: '12.5px', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div className="tunnel-warning-notice">
                 <Icon name="info" size={14} />
                 <span>Minecraft server is currently {server.status}. Start the server above so friends connecting through Playit can join.</span>
               </div>
             )}
             {!playit?.isRunning && (
-              <div style={{ marginTop: '8px', fontSize: '12.5px', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div className="tunnel-warning-notice">
                 <Icon name="warning" size={14} />
                 <span>Playit agent is currently offline. Click <strong>Re-verify Tunnel</strong> below to launch it.</span>
               </div>
@@ -315,7 +314,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
         )}
 
         {/* Technical Tunnel Details Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
+        <div className="tunnel-metrics-grid">
           <div className="metric-chip">
             <span className="metric-chip-label">Public Domain</span>
             <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>
@@ -347,8 +346,8 @@ export function ServerTunnelCard({ server }: { server: Server }) {
         </div>
 
         {/* Action Controls */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', gap: '8px' }}>
+        <div className="tunnel-card-actions">
+          <div className="tunnel-action-group">
             <button
               type="button"
               className="button button-secondary button-small"
@@ -373,7 +372,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
 
           <button
             type="button"
-            className="button button-danger-outline button-small"
+            className="button button-danger-outline button-small tunnel-remove-btn"
             onClick={() => void handleRemove()}
             disabled={actionBusy}
             title="Disconnect tunnel tracking from this server"
