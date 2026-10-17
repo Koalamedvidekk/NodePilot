@@ -14,7 +14,7 @@ type DatabaseServer = {
   machine_id: string;
   name: string;
   directory: string;
-  game: 'minecraft-java';
+  game: 'minecraft-java' | 'minecraft-bedrock';
   flavor: ServerFlavor;
   software: ServerSoftware;
   version: string;
@@ -40,12 +40,13 @@ export interface CreateServerRow {
   machineId: string;
   name: string;
   directory: string;
-  flavor: ServerFlavor;
+  game?: 'minecraft-java' | 'minecraft-bedrock';
+  flavor?: ServerFlavor;
   software?: ServerSoftware;
   version: string;
   loaderVersion?: string | null;
   startupConfig?: ServerStartupConfig;
-  requiredJavaMajor: number | null;
+  requiredJavaMajor?: number | null;
   port: number;
   memoryMb: number;
   eulaAccepted: boolean;
@@ -76,6 +77,7 @@ const validSoftware = new Set<ServerSoftware>([
   'forge',
   'neoforge',
   'quilt',
+  'bedrock',
   'unknown',
 ]);
 
@@ -107,6 +109,9 @@ function parseStartupConfig(value: unknown): ServerStartupConfig | null {
 
   if (candidate.mode === 'jar' && isSafeRelativePath(candidate.jarPath)) {
     return { mode: 'jar', jarPath: candidate.jarPath, gameArguments };
+  }
+  if (candidate.mode === 'executable' && isSafeRelativePath(candidate.executablePath)) {
+    return { mode: 'executable', executablePath: candidate.executablePath, gameArguments };
   }
   if (
     candidate.mode === 'arg-files' &&
@@ -194,24 +199,28 @@ export class ServerRepository {
 
   create(input: CreateServerRow): ServerRecord {
     const now = new Date().toISOString();
+    const software = input.software ?? input.flavor ?? 'vanilla';
+    const flavor = input.flavor ?? serverFlavorForSoftware(software);
+    const game = input.game ?? (software === 'bedrock' ? 'minecraft-bedrock' : 'minecraft-java');
     this.database
       .prepare(`
         INSERT INTO servers (
-          id, machine_id, name, directory, flavor, software, version, loader_version, startup_config, required_java_major, port, memory_mb, eula_accepted,
+          id, machine_id, name, directory, game, flavor, software, version, loader_version, startup_config, required_java_major, port, memory_mb, eula_accepted,
           status, install_state, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'installing', 'installing', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'installing', 'installing', ?, ?)
       `)
       .run(
         input.id,
         input.machineId,
         input.name,
         input.directory,
-        serverFlavorForSoftware(input.software ?? input.flavor),
-        input.software ?? input.flavor,
+        game,
+        flavor,
+        software,
         input.version,
         input.loaderVersion ?? null,
         JSON.stringify(assertStartupConfig(input.startupConfig ?? cloneDefaultStartupConfig())),
-        input.requiredJavaMajor,
+        input.requiredJavaMajor ?? null,
         input.port,
         input.memoryMb,
         input.eulaAccepted ? 1 : 0,

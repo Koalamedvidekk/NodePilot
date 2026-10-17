@@ -52,6 +52,12 @@ async function launchArguments(
   initialMemoryMb: number,
   maximumMemoryMb: number,
 ): Promise<{ args: string[]; description: string }> {
+  if (startup.mode === 'executable') {
+    return {
+      args: [...startup.gameArguments],
+      description: 'server executable',
+    };
+  }
   if (!startup.gameArguments.every(validGameArgument)) {
     throw new AppError(409, 'unsafe_startup_arguments', 'NodePilot refused unexpected launcher arguments. Reinstall this server.');
   }
@@ -154,7 +160,7 @@ export class ServerRuntime extends EventEmitter {
     return this.processes.has(serverId);
   }
 
-  async start(server: ServerRecord, javaPath: string, warning?: string): Promise<ServerRecord> {
+  async start(server: ServerRecord, javaPath?: string, warning?: string): Promise<ServerRecord> {
     if (server.installState !== 'ready') {
       throw new AppError(409, 'server_not_ready', 'This server is still installing or its installation failed.');
     }
@@ -163,23 +169,52 @@ export class ServerRuntime extends EventEmitter {
     }
 
     const directory = await resolveManagedServerRoot(this.serversDirectory, server.directory);
-    const initialMemoryMb = initialHeapMb(server.memoryMb);
-    const launch = await launchArguments(directory, server.startupConfig, initialMemoryMb, server.memoryMb);
-    const args = launch.args;
+    const startup = server.startupConfig;
+    const isExecutable = startup.mode === 'executable';
     let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn(javaPath, args, {
-        cwd: directory,
-        shell: false,
-        windowsHide: true,
-        detached: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'The Java process could not be started.';
-      const updated = this.repository.setStatus(server.id, 'error', { lastError: message });
-      this.emitStatus(updated);
-      throw new AppError(500, 'java_start_failed', message);
+
+    if (startup.mode === 'executable') {
+      const exePath = await requireRegularManagedFile(directory, startup.executablePath, 'server executable');
+      const env = { ...process.env };
+      if (process.platform === 'linux') {
+        env.LD_LIBRARY_PATH = `${directory}:${env.LD_LIBRARY_PATH ?? ''}`;
+      }
+      try {
+        child = spawn(exePath, startup.gameArguments, {
+          cwd: directory,
+          env,
+          shell: false,
+          windowsHide: true,
+          detached: false,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'The server executable could not be started.';
+        const updated = this.repository.setStatus(server.id, 'error', { lastError: message });
+        this.emitStatus(updated);
+        throw new AppError(500, 'executable_start_failed', message);
+      }
+    } else {
+      if (!javaPath) {
+        throw new AppError(422, 'java_missing', 'A compatible Java installation is required to start this server.');
+      }
+      const initialMemoryMb = initialHeapMb(server.memoryMb);
+      const launch = await launchArguments(directory, startup, initialMemoryMb, server.memoryMb);
+      const args = launch.args;
+      try {
+        child = spawn(javaPath, args, {
+          cwd: directory,
+          shell: false,
+          windowsHide: true,
+          detached: false,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'The Java process could not be started.';
+        const updated = this.repository.setStatus(server.id, 'error', { lastError: message });
+        this.emitStatus(updated);
+        throw new AppError(500, 'java_start_failed', message);
+      }
     }
 
     let resolveClose!: () => void;
@@ -201,7 +236,9 @@ export class ServerRuntime extends EventEmitter {
     this.appendLog(server.id, {
       timestamp: new Date().toISOString(),
       stream: 'system',
-      message: `Starting Java ${javaPath} using ${launch.description} with ${initialMemoryMb} MB initial heap and ${server.memoryMb} MB maximum heap.`,
+      message: startup.mode === 'executable'
+        ? `Starting Bedrock Dedicated Server (${startup.executablePath})...`
+        : `Starting Java ${javaPath} with ${initialHeapMb(server.memoryMb)} MB initial heap and ${server.memoryMb} MB maximum heap.`,
     });
     if (warning) this.appendLog(server.id, { timestamp: new Date().toISOString(), stream: 'system', message: warning });
 
@@ -219,7 +256,7 @@ export class ServerRuntime extends EventEmitter {
     });
 
     child.once('error', (error) => {
-      runtime.fatalError = `Java failed to start: ${error.message}`;
+      runtime.fatalError = isExecutable ? `Server failed to start: ${error.message}` : `Java failed to start: ${error.message}`;
       this.appendLog(server.id, { timestamp: new Date().toISOString(), stream: 'system', message: runtime.fatalError });
       const current = this.repository.find(server.id);
       if (current && current.status !== 'offline') {
@@ -300,7 +337,7 @@ export class ServerRuntime extends EventEmitter {
     return this.repository.find(server.id) ?? updated;
   }
 
-  async restart(server: ServerRecord, javaPath: string, warning?: string): Promise<ServerRecord> {
+  async restart(server: ServerRecord, javaPath?: string, warning?: string): Promise<ServerRecord> {
     if (this.processes.has(server.id)) await this.stop(server);
     const fresh = this.repository.find(server.id);
     if (!fresh) throw new AppError(404, 'server_not_found', 'The requested server no longer exists.');

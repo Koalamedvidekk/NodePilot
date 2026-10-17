@@ -1,14 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { lstat, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 
+import * as yauzl from 'yauzl';
+
 import { AppError, errorMessage } from '../lib/errors.js';
-import { resolveManagedServerRoot } from '../lib/paths.js';
+import { resolveInside, resolveManagedServerRoot } from '../lib/paths.js';
 import type { ServerRepository } from '../repositories/server-repository.js';
 import {
   type MinecraftVersion,
@@ -27,12 +29,22 @@ const QUILT_META_URL = 'https://meta.quiltmc.org/v3';
 const FORGE_METADATA_URL = 'https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml';
 const NEOFORGE_METADATA_URL = 'https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml';
 const SPIGOT_BUILD_TOOLS_URL = 'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar';
+const BEDROCK_DOWNLOADS_JSON_URL = 'https://raw.githubusercontent.com/kittizz/bedrock-server-downloads/main/bedrock-server-downloads.json';
 const DOWNLOAD_USER_AGENT = 'NodePilot/0.1 (https://github.com/nodepilot/nodepilot; local-server-manager)';
 const MAX_DOWNLOAD_BYTES = 1_500 * 1024 * 1024;
 const METADATA_CACHE_MS = 10 * 60 * 1000;
 const PAPER_METADATA_CONCURRENCY = 5;
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const INSTALLER_TIMEOUT_MS = 15 * 60 * 1000;
+
+const DEFAULT_FALLBACK_BEDROCK_VERSIONS = [
+  '1.26.52', '1.26.51', '1.26.45', '1.26.44', '1.26.43', '1.26.42', '1.26.40',
+  '1.26.36', '1.26.34', '1.26.33', '1.26.32', '1.26.31', '1.26.30', '1.26.23',
+  '1.26.21', '1.26.20', '1.26.14', '1.26.13', '1.26.12', '1.26.11', '1.26.10',
+  '1.26.3', '1.26.2', '1.26.1', '1.26.0', '1.21.95', '1.21.94', '1.21.93',
+  '1.21.92', '1.21.90', '1.21.84', '1.21.73', '1.21.72', '1.21.70', '1.21.62',
+  '1.21.60', '1.21.51', '1.21.50',
+];
 
 type VanillaManifestEntry = {
   id: string;
@@ -136,6 +148,9 @@ function trustedDownloadUrl(value: string): URL {
     'maven.minecraftforge.net',
     'maven.neoforged.net',
     'hub.spigotmc.org',
+    'www.minecraft.net',
+    'minecraft.net',
+    'raw.githubusercontent.com',
   ]);
   if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname)) {
     throw new AppError(502, 'untrusted_download_url', 'The upstream service returned an untrusted download URL.');
@@ -411,6 +426,46 @@ async function requireInstallerOutput(directory: string, fileName: string, label
   }
 }
 
+async function extractBedrockZip(archivePath: string, destination: string): Promise<void> {
+  const zip = await yauzl.openPromise(archivePath, {
+    autoClose: false,
+    lazyEntries: true,
+    decodeStrings: true,
+    validateEntrySizes: false,
+    strictFileNames: false,
+  });
+  try {
+    for await (const entry of zip.eachEntry()) {
+      const rawPath = entry.fileName.replace(/\\/g, '/');
+      if (
+        !rawPath ||
+        rawPath.startsWith('/') ||
+        rawPath.startsWith('\\') ||
+        /^[a-zA-Z]:/.test(rawPath) ||
+        rawPath.split('/').some((part) => part === '..')
+      ) {
+        continue;
+      }
+      const targetPath = await resolveInside(destination, rawPath, false);
+      if (rawPath.endsWith('/')) {
+        await mkdir(targetPath, { recursive: true });
+        continue;
+      }
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      const readStream = await zip.openReadStreamPromise(entry);
+      await pipeline(readStream, createWriteStream(targetPath, { flags: 'w' }));
+      if (process.platform !== 'win32') {
+        const base = path.basename(targetPath);
+        if (base === 'bedrock_server' || base.endsWith('.so') || base.includes('.so.')) {
+          await chmod(targetPath, 0o755).catch(() => undefined);
+        }
+      }
+    }
+  } finally {
+    zip.close();
+  }
+}
+
 export class MinecraftService {
   constructor(
     private readonly repository: ServerRepository,
@@ -419,6 +474,9 @@ export class MinecraftService {
 
   async getVersions(softwareInput: ServerSoftware | ServerFlavor): Promise<MinecraftVersion[]> {
     const software = normalizeSoftware(softwareInput);
+    if (software === 'bedrock') {
+      return (await this.getBedrockAvailableVersions()).map((id) => ({ id, type: 'release', releaseTime: null, available: true }));
+    }
     if (software === 'vanilla') {
       const manifest = await this.getVanillaManifest();
       return manifest.versions
@@ -449,6 +507,7 @@ export class MinecraftService {
 
   async getRequiredJavaMajor(softwareInput: ServerSoftware | ServerFlavor, version: string): Promise<number | null> {
     const software = normalizeSoftware(softwareInput);
+    if (software === 'bedrock') return null;
     // Paper tracks Minecraft release versions, so Mojang's per-release metadata remains the
     // authoritative Java requirement for both supported distributions.
     const details = await this.getVanillaDetails(version);
@@ -480,6 +539,7 @@ export class MinecraftService {
     else if (software === 'fabric') runtime = await this.installFabric(server, directory);
     else if (software === 'quilt') runtime = await this.installQuilt(server, directory);
     else if (software === 'forge' || software === 'neoforge') runtime = await this.installForgeLike(server, directory, software);
+    else if (software === 'bedrock') runtime = await this.installBedrock(server, directory);
     else runtime = await this.installSpigot(server, directory);
     await this.writeStarterConfiguration(server, directory);
     return runtime;
@@ -498,6 +558,8 @@ export class MinecraftService {
       if ((await this.getLoaderGameVersions(software)).includes(version)) return;
     } else if (software === 'forge' || software === 'neoforge') {
       if ((await this.getForgeLikeGameVersions(software)).includes(version)) return;
+    } else if (software === 'bedrock') {
+      if ((await this.getBedrockAvailableVersions()).includes(version)) return;
     } else if ((await this.getSpigotAvailableVersions()).includes(version)) {
       return;
     }
@@ -703,7 +765,117 @@ export class MinecraftService {
     }
   }
 
+  private async installBedrock(server: ServerRecord, directory: string): Promise<InstalledServerRuntime> {
+    const manifest = await this.getBedrockManifest();
+    const platform = process.platform === 'win32' ? 'windows' : 'linux';
+    const entry = manifest[server.version];
+    const platformUrl = entry?.[platform]?.url ?? (
+      platform === 'windows'
+        ? `https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-${server.version}.zip`
+        : `https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${server.version}.zip`
+    );
+
+    const zipTempPath = path.join(directory, `bedrock-download-${randomUUID()}.zip`);
+    try {
+      await downloadFile(platformUrl, zipTempPath, undefined, undefined, true);
+      await extractBedrockZip(zipTempPath, directory);
+      const exeName = process.platform === 'win32' ? 'bedrock_server.exe' : 'bedrock_server';
+      await requireInstallerOutput(directory, exeName, 'Bedrock Dedicated Server');
+      return {
+        software: 'bedrock',
+        loaderVersion: null,
+        startupConfig: {
+          mode: 'executable',
+          executablePath: exeName,
+          gameArguments: [],
+        },
+      };
+    } finally {
+      await rm(zipTempPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  private async getBedrockManifest(): Promise<Record<string, { windows?: { url: string }; linux?: { url: string } }>> {
+    const cacheKey = 'minecraft:bedrock-manifest';
+    const cached = this.repository.getCache<Record<string, { windows?: { url: string }; linux?: { url: string } }>>(cacheKey, METADATA_CACHE_MS);
+    if (cached && Object.keys(cached).length > 0) return cached;
+    try {
+      const raw = await requestJson<Record<string, unknown>>(BEDROCK_DOWNLOADS_JSON_URL);
+      const manifest: Record<string, { windows?: { url: string }; linux?: { url: string } }> =
+        raw?.release && typeof raw.release === 'object'
+          ? (raw.release as Record<string, { windows?: { url: string }; linux?: { url: string } }>)
+          : (raw as Record<string, { windows?: { url: string }; linux?: { url: string } }>);
+      if (manifest && typeof manifest === 'object' && Object.keys(manifest).length > 0) {
+        this.repository.setCache(cacheKey, manifest);
+        return manifest;
+      }
+    } catch {
+      // Fallback to embedded version catalogue
+    }
+    const fallback: Record<string, { windows?: { url: string }; linux?: { url: string } }> = {};
+    for (const v of DEFAULT_FALLBACK_BEDROCK_VERSIONS) {
+      fallback[v] = {
+        windows: { url: `https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-${v}.zip` },
+        linux: { url: `https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${v}.zip` },
+      };
+    }
+    return fallback;
+  }
+
+  private async getBedrockAvailableVersions(): Promise<string[]> {
+    const manifest = await this.getBedrockManifest();
+    return sortVersionsDescending(Object.keys(manifest));
+  }
+
   private async writeStarterConfiguration(server: ServerRecord, directory: string): Promise<void> {
+    if (server.software === 'bedrock') {
+      const propertiesPath = path.join(directory, 'server.properties');
+      let content = '';
+      try {
+        content = await readFile(propertiesPath, 'utf8');
+      } catch {
+        content = '';
+      }
+      if (content) {
+        if (/^server-name=/m.test(content)) {
+          content = content.replace(/^server-name=.*$/m, `server-name=${server.name}`);
+        } else {
+          content += `\nserver-name=${server.name}`;
+        }
+        if (/^server-port=/m.test(content)) {
+          content = content.replace(/^server-port=.*$/m, `server-port=${server.port}`);
+        } else {
+          content += `\nserver-port=${server.port}`;
+        }
+        if (/^server-portv6=/m.test(content)) {
+          content = content.replace(/^server-portv6=.*$/m, `server-portv6=${server.port + 1}`);
+        } else {
+          content += `\nserver-portv6=${server.port + 1}`;
+        }
+      } else {
+        content = [
+          '# Managed by NodePilot Bedrock Server',
+          `server-name=${server.name}`,
+          'gamemode=survival',
+          'difficulty=easy',
+          'allow-cheats=false',
+          'max-players=10',
+          'online-mode=true',
+          'white-list=false',
+          `server-port=${server.port}`,
+          `server-portv6=${server.port + 1}`,
+          'view-distance=32',
+          'tick-distance=4',
+          'player-idle-timeout=30',
+          'max-threads=8',
+          'level-name=Bedrock level',
+          '',
+        ].join('\n');
+      }
+      await writeFile(propertiesPath, content, { encoding: 'utf8' });
+      return;
+    }
+
     const serverProperties = [
       '# Managed by NodePilot. Values can be changed in the Server Properties editor.',
       'server-port=' + server.port,

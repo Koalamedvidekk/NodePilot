@@ -99,23 +99,25 @@ export class AutoStartService {
         let javaPath = server.javaPath;
         let warning: string | undefined;
 
-        if (this.javaService) {
-          const usableJava = await this.javaService.findUsable(server.requiredJavaMajor, server.javaPath);
-          if (!usableJava) {
-            this.log('error', `Cannot auto-start "${server.name}": Required Java runtime (${server.requiredJavaMajor ?? 'any'}) not found.`);
+        if (server.software !== 'bedrock' && server.startupConfig.mode !== 'executable') {
+          if (this.javaService) {
+            const usableJava = await this.javaService.findUsable(server.requiredJavaMajor, server.javaPath);
+            if (!usableJava) {
+              this.log('error', `Cannot auto-start "${server.name}": Required Java runtime (${server.requiredJavaMajor ?? 'any'}) not found.`);
+              continue;
+            }
+            javaPath = usableJava.installation.path;
+            warning = usableJava.warning;
+          }
+
+          if (!javaPath) {
+            this.log('error', `Cannot auto-start "${server.name}": No Java path configured or detected.`);
             continue;
           }
-          javaPath = usableJava.installation.path;
-          warning = usableJava.warning;
-        }
-
-        if (!javaPath) {
-          this.log('error', `Cannot auto-start "${server.name}": No Java path configured or detected.`);
-          continue;
         }
 
         this.log('info', `Starting auto-start server "${server.name}" (${server.id})...`);
-        await this.runtime.start(server, javaPath, warning);
+        await this.runtime.start(server, javaPath ?? undefined, warning);
         this.log('info', `Successfully started "${server.name}" on port ${server.port}.`);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);

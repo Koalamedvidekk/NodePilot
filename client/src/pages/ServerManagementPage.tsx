@@ -756,6 +756,17 @@ function MemoryAllocationControl({ server, onSave, actionBusy }: { server: Serve
     }
   };
 
+  if (server.software === 'bedrock') {
+    return (
+      <div className="memory-allocation">
+        <div className="memory-allocation-copy">
+          <strong>Memory management</strong>
+          <p>Bedrock Dedicated Server is a native C++ binary that manages memory dynamically without a Java heap.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="memory-allocation">
       <div className="memory-allocation-copy">
@@ -797,7 +808,7 @@ function OverviewPanel({ server, onAction, onMemorySave, actionBusy }: { server:
       </section>
       <section className="panel overview-card details-card">
         <div className="panel-heading"><div><h3>Server details</h3><p>Persisted local configuration</p></div></div>
-        <dl className="detail-list"><div><dt>Software</dt><dd>{titleCase(server.software ?? server.distribution)}</dd></div><div><dt>Version</dt><dd>{server.version ?? '—'}</dd></div><div><dt>Port</dt><dd>{server.port ?? '—'}</dd></div><div><dt>Maximum memory</dt><dd>{server.memoryMb ? `${server.memoryMb} MB` : 'Default'}</dd></div><div><dt>Required Java</dt><dd>{server.requiredJavaMajor ? `Java ${server.requiredJavaMajor}+` : 'Detected on start'}</dd></div><div><dt>Install state</dt><dd>{titleCase(server.installState)}</dd></div><div className="detail-wide"><dt>Directory</dt><dd><code>{server.directory ?? '—'}</code></dd></div></dl>
+        <dl className="detail-list"><div><dt>Software</dt><dd>{titleCase(server.software ?? server.distribution)}</dd></div><div><dt>Version</dt><dd>{server.version ?? '—'}</dd></div><div><dt>Port</dt><dd>{server.port ?? '—'}</dd></div><div><dt>Maximum memory</dt><dd>{server.software === 'bedrock' ? 'Native process' : server.memoryMb ? `${server.memoryMb} MB` : 'Default'}</dd></div><div><dt>Required Java</dt><dd>{server.software === 'bedrock' ? 'None (Native binary)' : server.requiredJavaMajor ? `Java ${server.requiredJavaMajor}+` : 'Detected on start'}</dd></div><div><dt>Install state</dt><dd>{titleCase(server.installState)}</dd></div><div className="detail-wide"><dt>Directory</dt><dd><code>{server.directory ?? '—'}</code></dd></div></dl>
         <MemoryAllocationControl server={server} onSave={onMemorySave} actionBusy={actionBusy} />
       </section>
       <section className="panel overview-card activity-card">
@@ -895,7 +906,7 @@ export function ServerManagementPage() {
     <section className="management-page page-enter">
       <div className="management-backrow"><Link to="/servers" className="back-link"><Icon name="arrowLeft" size={17} /> All servers</Link><button className="button button-ghost refresh-server" type="button" onClick={() => void load()} disabled={loading}><Icon name="refresh" size={16} /> Refresh</button></div>
       <div className="management-title-row">
-        <div className="server-identity"><div className="server-identity-icon"><Icon name="box" size={28} /></div><div><p className="eyebrow">{titleCase(server.software ?? server.distribution)} · MINECRAFT JAVA</p><h2>{server.name}</h2><span>Port {server.port ?? '—'} <i /> {server.version ?? 'Unknown version'}</span></div></div>
+        <div className="server-identity"><div className="server-identity-icon"><Icon name="box" size={28} /></div><div><p className="eyebrow">{titleCase(server.software ?? server.distribution)} · {server.software === 'bedrock' || server.game === 'minecraft-bedrock' ? 'MINECRAFT BEDROCK' : 'MINECRAFT JAVA'}</p><h2>{server.name}</h2><span>Port {server.port ?? '—'} <i /> {server.version ?? 'Unknown version'}</span></div></div>
         <div className="management-header-actions"><StatusBadge status={server.status} directoryMissing={server.directoryExists === false} /><button className="button button-danger-outline" type="button" onClick={() => void remove()} disabled={deleting || actionBusy}>{deleting ? 'Deleting…' : <><Icon name="trash" size={16} /> Delete</>}</button></div>
       </div>
       {server.directoryExists === false && (
@@ -921,6 +932,15 @@ export function ServerManagementPage() {
       {tab === 'addons' && (
         addonCategory ? (
           <AddonsPanel server={server} />
+        ) : server.software === 'bedrock' ? (
+          <section className="management-panel panel">
+            <div className="panel-heading">
+              <div>
+                <h3>Bedrock Add-ons</h3>
+                <p>Bedrock Dedicated Server uses behavior packs and resource packs. Place them in your server’s <code>behavior_packs</code> and <code>resource_packs</code> folders via the Files tab.</p>
+              </div>
+            </div>
+          </section>
         ) : (
           <section className="management-panel panel">
             <div className="panel-heading">

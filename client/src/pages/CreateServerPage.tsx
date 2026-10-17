@@ -13,15 +13,16 @@ const steps: Array<{ number: WizardStep; title: string; detail: string }> = [
   { number: 3, title: 'Review & create', detail: 'Accept the EULA and create the server.' },
 ];
 
-const softwareOptions: Array<{ id: ProvisionableServerSoftware; label: string; detail: string; source: string }> = [
-  { id: 'vanilla', label: 'Vanilla', detail: 'Official Minecraft server', source: 'Mojang release metadata' },
-  { id: 'paper', label: 'Paper', detail: 'Performance and Bukkit plugins', source: 'Paper downloads service' },
-  { id: 'spigot', label: 'Spigot', detail: 'Bukkit plugin ecosystem', source: 'Official BuildTools (Git required)' },
-  { id: 'purpur', label: 'Purpur', detail: 'Paper-compatible customization', source: 'Purpur project API' },
-  { id: 'fabric', label: 'Fabric', detail: 'Lightweight mod loader', source: 'Fabric Meta and installer' },
-  { id: 'forge', label: 'Forge', detail: 'Established mod loader', source: 'Forge Maven installer' },
-  { id: 'neoforge', label: 'NeoForge', detail: 'Modern Forge-family loader', source: 'NeoForge Maven installer' },
-  { id: 'quilt', label: 'Quilt', detail: 'Fabric-family mod loader', source: 'Quilt Meta and installer' },
+const softwareOptions: Array<{ id: ProvisionableServerSoftware; label: string; detail: string; source: string; edition: 'java' | 'bedrock' }> = [
+  { id: 'paper', label: 'Paper', detail: 'Performance and Bukkit plugins', source: 'Paper downloads service', edition: 'java' },
+  { id: 'vanilla', label: 'Vanilla', detail: 'Official Minecraft server', source: 'Mojang release metadata', edition: 'java' },
+  { id: 'spigot', label: 'Spigot', detail: 'Bukkit plugin ecosystem', source: 'Official BuildTools (Git required)', edition: 'java' },
+  { id: 'purpur', label: 'Purpur', detail: 'Paper-compatible customization', source: 'Purpur project API', edition: 'java' },
+  { id: 'fabric', label: 'Fabric', detail: 'Lightweight mod loader', source: 'Fabric Meta and installer', edition: 'java' },
+  { id: 'forge', label: 'Forge', detail: 'Established mod loader', source: 'Forge Maven installer', edition: 'java' },
+  { id: 'neoforge', label: 'NeoForge', detail: 'Modern Forge-family loader', source: 'NeoForge Maven installer', edition: 'java' },
+  { id: 'quilt', label: 'Quilt', detail: 'Fabric-family mod loader', source: 'Quilt Meta and installer', edition: 'java' },
+  { id: 'bedrock', label: 'Bedrock Dedicated Server', detail: 'Official native Bedrock server', source: 'Mojang Bedrock downloads', edition: 'bedrock' },
 ];
 
 function latestVersion(versions: MinecraftVersion[]): string {
@@ -35,6 +36,7 @@ function versionRequirement(version: MinecraftVersion | undefined): string | und
 export function CreateServerPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState<WizardStep>(1);
+  const [edition, setEdition] = useState<'java' | 'bedrock'>('java');
   const [software, setSoftware] = useState<ProvisionableServerSoftware>('paper');
   const [versions, setVersions] = useState<MinecraftVersion[]>([]);
   const [version, setVersion] = useState('');
@@ -52,6 +54,11 @@ export function CreateServerPage() {
   const [playit, setPlayit] = useState<import('../types').PlayitStatus>();
   const [error, setError] = useState<string>();
   const [creating, setCreating] = useState(false);
+
+  const switchEdition = (nextEdition: 'java' | 'bedrock') => {
+    setEdition(nextEdition);
+    setSoftware(nextEdition === 'bedrock' ? 'bedrock' : 'paper');
+  };
 
   useEffect(() => {
     void api.getHostSettings()
@@ -87,8 +94,9 @@ export function CreateServerPage() {
   }, []);
 
   useEffect(() => {
-    if (!version) {
+    if (!version || software === 'bedrock') {
       setRequirements(undefined);
+      setLoadingRequirements(false);
       return;
     }
     let active = true;
@@ -106,10 +114,11 @@ export function CreateServerPage() {
     return () => { active = false; };
   }, [software, version]);
 
+  const isBedrock = software === 'bedrock';
   const selectedVersion = useMemo(() => versions.find((item) => item.id === version), [versions, version]);
-  const requiredJava = requirements?.requiredJavaMajor ?? selectedVersion?.javaMajor;
-  const compatibleJava = requirements?.compatibleJava ?? java?.installations.filter((item) => !requiredJava || !item.major || item.major >= requiredJava) ?? [];
-  const javaReady = Boolean(requirements) && compatibleJava.length > 0;
+  const requiredJava = isBedrock ? null : (requirements?.requiredJavaMajor ?? selectedVersion?.javaMajor);
+  const compatibleJava = isBedrock ? [] : (requirements?.compatibleJava ?? java?.installations.filter((item) => !requiredJava || !item.major || item.major >= requiredJava) ?? []);
+  const javaReady = isBedrock || (Boolean(requirements) && compatibleJava.length > 0);
   const normalizedPort = port.trim() ? Number(port) : undefined;
   const normalizedMemory = memoryMb.trim() ? Number(memoryMb) : undefined;
   const formError = !name.trim()
@@ -207,12 +216,31 @@ export function CreateServerPage() {
 
           {step === 1 && (
             <div className="wizard-section">
-              <div className="section-heading"><div><p className="eyebrow">GAME & SOFTWARE</p><h3>Minecraft: Java Edition</h3></div></div>
-              <div className="game-selection"><div className="game-tile is-selected"><div className="game-tile-mark"><Icon name="box" size={30} /></div><div><strong>Minecraft Java</strong><span>Official server software for local play</span></div><Icon name="check" size={20} /></div></div>
+              <div className="section-heading"><div><p className="eyebrow">GAME & SOFTWARE</p><h3>Minecraft Edition</h3></div></div>
+              <div className="game-selection">
+                <button
+                  type="button"
+                  className={`game-tile ${edition === 'java' ? 'is-selected' : ''}`}
+                  onClick={() => switchEdition('java')}
+                >
+                  <div className="game-tile-mark"><Icon name="box" size={30} /></div>
+                  <div><strong>Minecraft: Java Edition</strong><span>Official server & mod loaders for PC</span></div>
+                  {edition === 'java' && <Icon name="check" size={20} />}
+                </button>
+                <button
+                  type="button"
+                  className={`game-tile ${edition === 'bedrock' ? 'is-selected' : ''}`}
+                  onClick={() => switchEdition('bedrock')}
+                >
+                  <div className="game-tile-mark"><Icon name="cpu" size={30} /></div>
+                  <div><strong>Minecraft: Bedrock Edition</strong><span>Cross-play for Windows, mobile & consoles</span></div>
+                  {edition === 'bedrock' && <Icon name="check" size={20} />}
+                </button>
+              </div>
 
               <fieldset className="field-group"><legend>Server software</legend><p className="field-help">Choose a supported implementation. NodePilot only offers versions that its trusted source reports for that software.</p>
                 <div className="flavor-cards">
-                  {softwareOptions.map((option) => <label key={option.id} className={`flavor-card ${software === option.id ? 'is-selected' : ''}`}>
+                  {softwareOptions.filter((opt) => opt.edition === edition).map((option) => <label key={option.id} className={`flavor-card ${software === option.id ? 'is-selected' : ''}`}>
                     <input type="radio" name="software" value={option.id} checked={software === option.id} onChange={() => setSoftware(option.id)} />
                     <span className={`flavor-icon ${option.id}-icon`}>{option.label[0]}</span>
                     <span><strong>{option.label}</strong><small>{option.detail}</small><small className="software-source">{option.source}</small></span>
@@ -239,40 +267,51 @@ export function CreateServerPage() {
             <div className="wizard-section">
               <div className="section-heading"><div><p className="eyebrow">LOCAL CONFIGURATION</p><h3>Server details</h3></div></div>
               <div className="form-grid">
-                <label className="field-group form-field form-field-wide"><span>Server name</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={64} placeholder="My Minecraft server" /><small className="input-note">Used only in NodePilot. Server files get a safe directory name automatically.</small></label>
-                <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder="Auto-select" /><small className="input-note">Leave blank for a free local port.</small></label>
-                <label className="field-group form-field"><span>Memory limit (MB)</span><input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} placeholder="2048" /><small className="input-note">Java heap allocation.</small></label>
+                <label className="field-group form-field form-field-wide"><span>Server name</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={64} placeholder={isBedrock ? 'My Bedrock server' : 'My Minecraft server'} /><small className="input-note">Used only in NodePilot. Server files get a safe directory name automatically.</small></label>
+                <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder={isBedrock ? 'Auto-select (19132)' : 'Auto-select'} /><small className="input-note">Leave blank for a free local port.</small></label>
+                <label className="field-group form-field"><span>Memory limit (MB)</span><input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} placeholder="2048" /><small className="input-note">{isBedrock ? 'Process memory allocation.' : 'Java heap allocation.'}</small></label>
               </div>
 
-              <section className={`java-check ${!loadingJava && !javaReady ? 'has-problem' : ''}`}>
-                <div className="java-check-icon"><Icon name="java" size={21} /></div>
-                <div className="java-check-copy">
-                  <strong>{loadingJava || loadingRequirements ? 'Checking local Java…' : requiredJava ? `Java ${requiredJava}+ requirement` : 'Local Java runtime'}</strong>
-                  <p>{loadingJava
-                    ? 'Searching your PATH and common Java installations.'
-                    : !javaReady
-                      ? requirementsError ?? `No compatible Java ${requiredJava ?? ''} installation was found. Install Java ${requiredJava ?? ''} or later, then reload NodePilot.`
-                      : compatibleJava.length > 0
-                        ? `${compatibleJava[0].version}${compatibleJava[0].vendor ? ` · ${compatibleJava[0].vendor}` : ''} is ready for this server.`
-                        : java?.message ?? versionRequirement(selectedVersion) ?? 'NodePilot will validate Java again before launching the server.'}</p>
-                  {!loadingJava && java?.installations.length === 0 && javaReady && <p className="subtle-warning"><Icon name="info" size={15} /> No Java runtime was reported yet; creation will verify it safely.</p>}
-                </div>
-                <span className={`java-state ${loadingJava || loadingRequirements ? 'checking' : javaReady ? 'ready' : 'missing'}`}>
-                  {loadingJava || loadingRequirements ? 'Checking' : javaReady ? 'Ready' : 'Missing'}
-                </span>
-              </section>
+              {isBedrock ? (
+                <section className="java-check">
+                  <div className="java-check-icon"><Icon name="cpu" size={21} /></div>
+                  <div className="java-check-copy">
+                    <strong>Native C++ Binary (No Java required)</strong>
+                    <p>Minecraft Bedrock Dedicated Server runs directly on Windows and Linux as a compiled binary. No Java runtime is required.</p>
+                  </div>
+                  <span className="java-state ready">Ready</span>
+                </section>
+              ) : (
+                <section className={`java-check ${!loadingJava && !javaReady ? 'has-problem' : ''}`}>
+                  <div className="java-check-icon"><Icon name="java" size={21} /></div>
+                  <div className="java-check-copy">
+                    <strong>{loadingJava || loadingRequirements ? 'Checking local Java…' : requiredJava ? `Java ${requiredJava}+ requirement` : 'Local Java runtime'}</strong>
+                    <p>{loadingJava
+                      ? 'Searching your PATH and common Java installations.'
+                      : !javaReady
+                        ? requirementsError ?? `No compatible Java ${requiredJava ?? ''} installation was found. Install Java ${requiredJava ?? ''} or later, then reload NodePilot.`
+                        : compatibleJava.length > 0
+                          ? `${compatibleJava[0].version}${compatibleJava[0].vendor ? ` · ${compatibleJava[0].vendor}` : ''} is ready for this server.`
+                          : java?.message ?? versionRequirement(selectedVersion) ?? 'NodePilot will validate Java again before launching the server.'}</p>
+                    {!loadingJava && java?.installations.length === 0 && javaReady && <p className="subtle-warning"><Icon name="info" size={15} /> No Java runtime was reported yet; creation will verify it safely.</p>}
+                  </div>
+                  <span className={`java-state ${loadingJava || loadingRequirements ? 'checking' : javaReady ? 'ready' : 'missing'}`}>
+                    {loadingJava || loadingRequirements ? 'Checking' : javaReady ? 'Ready' : 'Missing'}
+                  </span>
+                </section>
+              )}
             </div>
           )}
 
           {step === 3 && (
             <div className="wizard-section review-section">
-              <div className="section-heading"><div><p className="eyebrow">FINAL CHECK</p><h3>Ready to create</h3><p>NodePilot will create the directory, download the server JAR, write configuration, and persist this server locally.</p></div></div>
+              <div className="section-heading"><div><p className="eyebrow">FINAL CHECK</p><h3>Ready to create</h3><p>NodePilot will create the directory, download {isBedrock ? 'official Bedrock Dedicated Server files' : 'the server JAR'}, write configuration, and persist this server locally.</p></div></div>
               <dl className="review-list">
                 <div><dt>Server</dt><dd>{name || 'Unnamed server'}</dd></div>
-                <div><dt>Software</dt><dd>{titleCase(software)} {version || '—'}</dd></div>
-                <div><dt>Port</dt><dd>{normalizedPort ?? 'Auto-select a free port'}</dd></div>
+                <div><dt>Software</dt><dd>{isBedrock ? 'Bedrock Dedicated Server' : titleCase(software)} {version || '—'}</dd></div>
+                <div><dt>Port</dt><dd>{normalizedPort ?? (isBedrock ? 'Auto-select (default 19132)' : 'Auto-select a free port')}</dd></div>
                 <div><dt>Memory</dt><dd>{normalizedMemory ? `${normalizedMemory} MB` : 'NodePilot default'}</dd></div>
-                <div><dt>Java</dt><dd>{requiredJava ? `Java ${requiredJava}+` : 'Validated on create'}</dd></div>
+                <div><dt>Java</dt><dd>{isBedrock ? 'None (Native C++ Binary)' : requiredJava ? `Java ${requiredJava}+` : 'Validated on create'}</dd></div>
               </dl>
               <label className={`eula-agreement ${eulaAccepted ? 'is-accepted' : ''}`}>
                 <input type="checkbox" checked={eulaAccepted} onChange={(event) => setEulaAccepted(event.target.checked)} />

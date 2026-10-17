@@ -233,15 +233,16 @@ svg { display: block; flex: 0 0 auto; }
 .wizard-panel { overflow: hidden; }
 .wizard-panel > .inline-alert { margin: 20px 22px 0; }
 .wizard-section { padding: 26px 27px; min-height: 395px; }
-.game-selection { margin: 18px 0 26px; }
-.game-tile { display: flex; align-items: center; gap: 13px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; }
+.game-selection { margin: 18px 0 26px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.game-tile { display: flex; align-items: center; gap: 13px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: transparent; text-align: left; cursor: pointer; color: inherit; font-family: inherit; transition: border-color .15s, background .15s; width: 100%; box-sizing: border-box; }
+.game-tile:hover { border-color: rgba(123,101,255,.3); }
 .game-tile.is-selected { border-color: rgba(123,101,255,.45); background: rgba(123,101,255,.08); }
 .game-tile-mark { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 10px; color: var(--cyan); background: rgba(83,216,255,.1); }
-.game-tile div:nth-child(2) { flex: 1; }
+.game-tile div:nth-child(2) { flex: 1; min-width: 0; }
 .game-tile strong, .game-tile span { display: block; }
-.game-tile strong { font-size: 13px; }
+.game-tile strong { font-size: 13px; font-weight: 600; }
 .game-tile span { margin-top: 3px; color: var(--muted); font-size: 11px; }
-.game-tile > svg { color: var(--green); }
+.game-tile > svg { color: var(--green); flex-shrink: 0; }
 .field-group { min-width: 0; margin: 0; padding: 0; border: 0; }
 .field-group legend, .field-group > span { display: block; margin-bottom: 5px; color: #e2e9fa; font-size: 12px; font-weight: 700; }
 .field-help, .input-note { margin: 0 0 11px; color: var(--muted-2); font-size: 11px; line-height: 1.45; }
@@ -260,6 +261,7 @@ svg { display: block; flex: 0 0 auto; }
 .purpur-icon, .quilt-icon { color: #e6a6ff; background: rgba(202,115,255,.14); }
 .fabric-icon { color: #f3c98a; background: rgba(244,172,77,.14); }
 .forge-icon, .neoforge-icon { color: #ff9a75; background: rgba(255,116,83,.14); }
+.bedrock-icon { color: #53d8ff; background: rgba(83,216,255,.15); }
 .radio-indicator { width: 14px; height: 14px; border: 1px solid var(--line-strong); border-radius: 50%; }
 .flavor-card.is-selected .radio-indicator { border: 4px solid #9a87ff; }
 .form-field { margin-top: 24px; }

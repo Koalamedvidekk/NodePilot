@@ -44,7 +44,7 @@ let config = getConfig();
 let currentListeningHost = config.host;
 const idSchema = z.string().uuid();
 const flavorSchema = z.enum(['vanilla', 'paper']);
-const softwareSchema = z.enum(['vanilla', 'paper', 'spigot', 'purpur', 'fabric', 'forge', 'neoforge', 'quilt']);
+const softwareSchema = z.enum(['vanilla', 'paper', 'spigot', 'purpur', 'fabric', 'forge', 'neoforge', 'quilt', 'bedrock']);
 const serverParamsSchema = z.object({ id: idSchema });
 const createServerSchema = z.object({
   name: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f\r\n]/.test(value), 'Name cannot contain control characters.'),
@@ -208,7 +208,7 @@ function serializeServer(server: ServerRecord, directoryExists = true) {
     id: server.id,
     machineId: server.machineId,
     name: server.name,
-    game: 'minecraft',
+    game: server.game ?? (server.software === 'bedrock' ? 'minecraft-bedrock' : 'minecraft-java'),
     flavor: server.flavor,
     software: server.software,
     distribution: server.software,
@@ -266,7 +266,7 @@ async function assertPortAvailable(port: number): Promise<void> {
   });
 }
 
-async function chooseGamePort(repository: ServerRepository, requestedPort?: number): Promise<number> {
+async function chooseGamePort(repository: ServerRepository, requestedPort?: number, isBedrock = false): Promise<number> {
   if (requestedPort !== undefined) {
     if (repository.portIsAssigned(requestedPort)) {
       throw new AppError(409, 'port_assigned', `Port ${requestedPort} is already assigned to another managed server.`);
@@ -277,7 +277,9 @@ async function chooseGamePort(repository: ServerRepository, requestedPort?: numb
 
   // Prefer the conventional Minecraft port, then move through a bounded nearby range. The
   // later bind error from Java is still handled since no preflight can eliminate this race.
-  for (let port = 25_565; port <= 25_665; port += 1) {
+  const startPort = isBedrock ? 19_132 : 25_565;
+  const endPort = startPort + 100;
+  for (let port = startPort; port <= endPort; port += 1) {
     if (repository.portIsAssigned(port)) continue;
     try {
       await assertPortAvailable(port);
@@ -286,7 +288,7 @@ async function chooseGamePort(repository: ServerRepository, requestedPort?: numb
       if (!(error instanceof AppError) || error.code !== 'port_in_use') throw error;
     }
   }
-  throw new AppError(409, 'no_port_available', 'NodePilot could not find a free Minecraft port between 25565 and 25665. Choose a port manually.');
+  throw new AppError(409, 'no_port_available', `NodePilot could not find a free Minecraft port between ${startPort} and ${endPort}. Choose a port manually.`);
 }
 
 async function clientBuildExists(): Promise<boolean> {
@@ -501,13 +503,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     const software = selectedSoftware(input);
     await minecraft.assertVersionAvailable(software, input.version);
     const requiredJavaMajor = await minecraft.getRequiredJavaMajor(software, input.version);
-    const usableJava = await java.findUsable(requiredJavaMajor, input.javaPath);
-    if (!usableJava) {
-      throw new AppError(422, 'java_missing', requiredJavaMajor
-        ? `Java ${requiredJavaMajor} is required for this Minecraft version. Install it, then refresh Java detection.`
-        : 'No usable Java installation was found. Install Java, then refresh Java detection.');
+    let usableJava: { installation: { path: string }; warning?: string } | null = null;
+    if (software !== 'bedrock') {
+      usableJava = await java.findUsable(requiredJavaMajor, input.javaPath);
+      if (!usableJava) {
+        throw new AppError(422, 'java_missing', requiredJavaMajor
+          ? `Java ${requiredJavaMajor} is required for this Minecraft version. Install it, then refresh Java detection.`
+          : 'No usable Java installation was found. Install Java, then refresh Java detection.');
+      }
     }
-    const port = await chooseGamePort(repository, input.port);
+    const isBedrock = software === 'bedrock';
+    const port = await chooseGamePort(repository, input.port, isBedrock);
     const id = crypto.randomUUID();
     const directory = `${input.name
       .normalize('NFKD')
@@ -523,6 +529,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         machineId: 'local',
         name: input.name,
         directory,
+        game: isBedrock ? 'minecraft-bedrock' : 'minecraft-java',
         flavor: software === 'paper' ? 'paper' : 'vanilla',
         software,
         version: input.version,
@@ -531,7 +538,9 @@ export async function buildApp(): Promise<FastifyInstance> {
         memoryMb: input.memoryMb,
         eulaAccepted: input.eulaAccepted,
       });
-      created = repository.update(id, { javaPath: usableJava.installation.path });
+      if (usableJava) {
+        created = repository.update(id, { javaPath: usableJava.installation.path });
+      }
       const installed = await minecraft.install(created);
       created = repository.setRuntimeConfiguration(id, installed);
       const ready = repository.markReady(id);
@@ -544,7 +553,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
       }
 
-      return reply.code(201).send({ server: serializeServer(ready), javaWarning: usableJava.warning });
+      return reply.code(201).send({ server: serializeServer(ready), javaWarning: usableJava?.warning });
     } catch (error) {
       if (created) repository.markInstallFailed(id, errorMessage(error));
       throw error;
@@ -604,16 +613,23 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!directoryExists) {
       throw new AppError(404, 'server_directory_not_found', 'The server directory does not exist on disk.');
     }
-    const usableJava = await java.findUsable(server.requiredJavaMajor, server.javaPath);
-    if (!usableJava) {
-      throw new AppError(422, 'java_missing', server.requiredJavaMajor
-        ? `Java ${server.requiredJavaMajor} is required to start this server.`
-        : 'No usable Java installation was found to start this server.');
+    const isBedrock = server.software === 'bedrock' || server.startupConfig.mode === 'executable';
+    let javaPath: string | undefined;
+    let warning: string | undefined;
+    if (!isBedrock) {
+      const usableJava = await java.findUsable(server.requiredJavaMajor, server.javaPath);
+      if (!usableJava) {
+        throw new AppError(422, 'java_missing', server.requiredJavaMajor
+          ? `Java ${server.requiredJavaMajor} is required to start this server.`
+          : 'No usable Java installation was found to start this server.');
+      }
+      if (server.javaPath !== usableJava.installation.path) server = repository.update(server.id, { javaPath: usableJava.installation.path });
+      javaPath = usableJava.installation.path;
+      warning = usableJava.warning;
     }
-    if (server.javaPath !== usableJava.installation.path) server = repository.update(server.id, { javaPath: usableJava.installation.path });
     const updated = action === 'start'
-      ? await runtime.start(server, usableJava.installation.path, usableJava.warning)
-      : await runtime.restart(server, usableJava.installation.path, usableJava.warning);
+      ? await runtime.start(server, javaPath, warning)
+      : await runtime.restart(server, javaPath, warning);
 
     if (action === 'start' || action === 'restart') {
       const associatedTunnel = serverTunnelRepo.find(server.id);

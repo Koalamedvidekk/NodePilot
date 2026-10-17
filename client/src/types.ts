@@ -1,13 +1,14 @@
 export type ServerStatus = 'running' | 'stopped' | 'installing' | 'starting' | 'stopping' | 'error' | 'unknown';
 
-export type ServerSoftware = 'vanilla' | 'paper' | 'spigot' | 'purpur' | 'fabric' | 'forge' | 'neoforge' | 'quilt' | 'unknown';
+export type ServerSoftware = 'vanilla' | 'paper' | 'spigot' | 'purpur' | 'fabric' | 'forge' | 'neoforge' | 'quilt' | 'bedrock' | 'unknown';
 export type ProvisionableServerSoftware = Exclude<ServerSoftware, 'unknown'>;
 /** @deprecated Kept as an alias while older NodePilot responses use “distribution”. */
 export type Distribution = ProvisionableServerSoftware;
 
 export type ServerStartupConfig =
   | { mode: 'jar'; jarPath: string; gameArguments: string[] }
-  | { mode: 'arg-files'; windowsArgFile: string; linuxArgFile: string; jvmArgFiles: string[]; gameArguments: string[] };
+  | { mode: 'arg-files'; windowsArgFile: string; linuxArgFile: string; jvmArgFiles: string[]; gameArguments: string[] }
+  | { mode: 'executable'; executablePath: string; gameArguments: string[] };
 
 export interface Server {
   id: string;
