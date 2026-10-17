@@ -28,19 +28,20 @@ export function ServerTunnelCard({ server }: { server: Server }) {
   };
 
   const hasPublicAddress = Boolean(tunnel?.publicAddress || tunnel?.connectionAddress);
+  const isBedrock = server.software === 'bedrock' || server.game === 'minecraft-bedrock';
 
   const effectiveAddress = useMemo(() => {
     if (!tunnel) return '';
     const host = tunnel.publicAddress || tunnel.connectionAddress;
     if (!host) return '';
-    if (tunnel.publicPort && tunnel.publicPort !== 25565) {
+    if (tunnel.publicPort && (tunnel.publicPort !== 25565 || isBedrock)) {
       if (tunnel.connectionAddress && tunnel.connectionAddress.includes(':')) {
         return tunnel.connectionAddress;
       }
       return `${host.replace(/:.*$/, '')}:${tunnel.publicPort}`;
     }
     return tunnel.connectionAddress || host;
-  }, [tunnel]);
+  }, [tunnel, isBedrock]);
 
   useEffect(() => {
     void loadTunnel();
@@ -244,7 +245,9 @@ export function ServerTunnelCard({ server }: { server: Server }) {
               </button>
             </div>
             <p className="public-address-caption">
-              Give this address to players outside your network. Players in Minecraft Java can paste this directly into Direct Connection or Server List.
+              {isBedrock
+                ? 'Give this address and port to players outside your network. Players on Minecraft Bedrock (Mobile, Console, Windows) can enter these in the Add Server screen.'
+                : 'Give this address to players outside your network. Players in Minecraft Java can paste this directly into Direct Connection or Server List.'}
             </p>
             {server.status !== 'running' && (
               <div className="tunnel-warning-notice">
@@ -308,7 +311,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
               </button>
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px' }}>
-              💡 <strong>Quick Steps:</strong> 1. Click button above &bull; 2. Select <strong>Minecraft Java</strong> &bull; 3. Enter Port <strong>{tunnel.localPort}</strong> &bull; 4. Click Add Tunnel. NodePilot will automatically detect it within seconds!
+              💡 <strong>Quick Steps:</strong> 1. Click button above &bull; 2. Select <strong>{isBedrock ? 'Minecraft Bedrock' : 'Minecraft Java'}</strong> &bull; 3. Enter Port <strong>{tunnel.localPort}</strong> &bull; 4. Click Add Tunnel. NodePilot will automatically detect it within seconds!
             </div>
           </div>
         )}
