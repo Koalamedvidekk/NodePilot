@@ -177,3 +177,22 @@ test('MinecraftService reports no required Java major for Bedrock', async () => 
     await safeCleanup(db, tempDir);
   }
 });
+
+test('MinecraftService verifies Bedrock version available', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-bedrock-'));
+  const dbPath = path.join(tempDir, 'test.sqlite');
+  let db: SqliteDb | undefined;
+
+  try {
+    db = openDatabase(dbPath);
+    const repo = new ServerRepository(db);
+    const service = new MinecraftService(repo, tempDir);
+
+    await assert.doesNotReject(async () => {
+      await service.assertVersionAvailable('bedrock', '1.26.52');
+    });
+  } finally {
+    await safeCleanup(db, tempDir);
+  }
+});
+

@@ -31,6 +31,20 @@ const NEOFORGE_METADATA_URL = 'https://maven.neoforged.net/releases/net/neoforge
 const SPIGOT_BUILD_TOOLS_URL = 'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar';
 const BEDROCK_DOWNLOADS_JSON_URL = 'https://raw.githubusercontent.com/kittizz/bedrock-server-downloads/main/bedrock-server-downloads.json';
 const DOWNLOAD_USER_AGENT = 'NodePilot/0.1 (https://github.com/nodepilot/nodepilot; local-server-manager)';
+const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+function userAgentForUrl(targetUrl: string): string {
+  try {
+    const hostname = new URL(targetUrl).hostname;
+    if (hostname.includes('minecraft.net')) {
+      return BROWSER_USER_AGENT;
+    }
+  } catch {
+    // ignore
+  }
+  return DOWNLOAD_USER_AGENT;
+}
+
 const MAX_DOWNLOAD_BYTES = 1_500 * 1024 * 1024;
 const METADATA_CACHE_MS = 10 * 60 * 1000;
 const PAPER_METADATA_CONCURRENCY = 5;
@@ -173,7 +187,7 @@ async function trustedFetch(url: string, init: RequestInit = {}): Promise<Respon
         signal: init.signal ?? controller.signal,
         headers: {
           Accept: 'application/json, application/octet-stream;q=0.9, */*;q=0.1',
-          'User-Agent': DOWNLOAD_USER_AGENT,
+          'User-Agent': userAgentForUrl(current),
           ...init.headers,
         },
       });
@@ -252,7 +266,7 @@ async function downloadFile(
   } catch (error) {
     clearTimeout(downloadTimeout);
     if (error instanceof AppError) throw error;
-    throw new AppError(503, 'download_unavailable', 'Could not reach the upstream download service.');
+    throw new AppError(503, 'download_unavailable', `Could not reach the upstream download service: ${errorMessage(error)}`);
   }
   if (!response.ok || !response.body) {
     clearTimeout(downloadTimeout);
