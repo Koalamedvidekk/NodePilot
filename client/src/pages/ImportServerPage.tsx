@@ -2,6 +2,7 @@ import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '../api';
+import { CustomSelect } from '../components/CustomSelect';
 import { Icon } from '../components/Icon';
 import type { ImportInspection, ProvisionableServerSoftware } from '../types';
 import { errorMessage, formatBytes, titleCase } from '../utils';
@@ -191,7 +192,16 @@ export function ImportServerPage() {
           <div className="section-heading"><div><p className="eyebrow">2 · CONFIRM CONFIGURATION</p><h3>Managed copy settings</h3><p>Detection can be uncertain. Confirm the software and version used by the existing server.</p></div></div>
           <div className="form-grid">
             <label className="field-group form-field form-field-wide"><span>Server name</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={64} /></label>
-            <label className="field-group form-field"><span>NodePilot software</span><div className="select-wrap"><select value={software} onChange={(event) => setSoftware(event.target.value as ProvisionableServerSoftware)}>{supportedSoftware.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select><Icon name="chevronDown" size={17} /></div><small className="input-note">Controls compatibility checks. Detected loader startup files are retained separately.</small></label>
+            <div className="field-group form-field">
+              <span>NodePilot software</span>
+              <CustomSelect
+                value={software}
+                onChange={(val) => setSoftware(val as ProvisionableServerSoftware)}
+                options={supportedSoftware.map((item) => ({ value: item.id, label: item.label }))}
+                aria-label="NodePilot software"
+              />
+              <small className="input-note">Controls compatibility checks. Detected loader startup files are retained separately.</small>
+            </div>
             <label className="field-group form-field"><span>Minecraft version</span><input value={version} onChange={(event) => setVersion(event.target.value.replace(/[^A-Za-z0-9._-]/g, ''))} placeholder="1.21.4" /></label>
             <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder="Auto-select" /><small className="input-note">The original port is retained when free; otherwise NodePilot updates only the managed copy.</small></label>
             <label className="field-group form-field"><span>Maximum memory (MB)</span><input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} /><small className="input-note">The Java heap ceiling; it can be changed again while stopped.</small></label>

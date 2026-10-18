@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 
 import { ApiError, api } from '../api';
+import { CustomSelect } from '../components/CustomSelect';
 import { Icon } from '../components/Icon';
 import type { AddonCatalogResult, AddonList, AddonType, AddonUpdate, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, titleCase } from '../utils';
@@ -209,7 +210,19 @@ export function AddonsPanel({ server }: { server: Server }) {
           <div className="addon-card-title"><div><h4>Find {type === 'plugin' ? 'plugins' : 'mods'}</h4><p>Search official catalogue APIs for this server version and software.</p></div><button className="button button-secondary" type="button" onClick={chooseUpload} disabled={!stopped || !supported || Boolean(busy)}><Icon name="plus" size={16} /> {type === 'plugin' ? 'Upload plugin JAR' : 'Upload mod JAR'}</button><input className="sr-only" ref={fileInput} type="file" accept=".jar,application/java-archive" onChange={(event) => void upload(event)} /></div>
           <form className="addon-search" onSubmit={(event) => void search(event)}>
             <input value={query} onChange={(event) => setQuery(event.target.value)} disabled={!supported || searching} placeholder={`Search ${type === 'plugin' ? 'Paper plugins' : `${titleCase(server.software)} mods`}`} maxLength={100} aria-label="Search add-ons" />
-            {type === 'plugin' && <select value={source} onChange={(event) => setSource(event.target.value as 'modrinth' | 'hangar')} disabled={!supported || searching} aria-label="Catalogue source"><option value="modrinth">Modrinth</option><option value="hangar">Hangar</option></select>}
+            {type === 'plugin' && (
+              <CustomSelect
+                value={source}
+                onChange={(val) => setSource(val as 'modrinth' | 'hangar')}
+                disabled={!supported || searching}
+                options={[
+                  { value: 'modrinth', label: 'Modrinth' },
+                  { value: 'hangar', label: 'Hangar' },
+                ]}
+                aria-label="Catalogue source"
+                className="addon-search-select"
+              />
+            )}
             <button className="button button-primary" type="submit" disabled={!supported || !query.trim() || searching}>{searching ? 'Searching...' : 'Search'}</button>
           </form>
           {results.length > 0 && (

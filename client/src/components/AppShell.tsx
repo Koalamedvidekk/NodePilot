@@ -156,7 +156,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               onClick={() => setNetworkModalOpen(true)}
               title={network?.requiresRestart ? 'Restart in terminal (npm start) to apply changes' : 'Click to view network access URLs'}
             >
-              {network?.requiresRestart ? <Icon name="warning" size={13} /> : (network?.isNetworkVisible ? <Icon name="wifi" size={13} /> : <span />)}
+              {network?.requiresRestart ? (
+                <Icon name="warning" size={13} />
+              ) : network?.isNetworkVisible ? (
+                <Icon name="wifi" size={13} />
+              ) : (
+                <span className="connection-dot" />
+              )}
               <span className="connection-text-desktop">
                 {network?.requiresRestart ? 'Restart needed' : (network?.isNetworkVisible ? 'LAN mode' : 'Local mode')}
               </span>

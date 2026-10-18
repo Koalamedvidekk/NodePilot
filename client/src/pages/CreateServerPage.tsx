@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
+import { CustomSelect } from '../components/CustomSelect';
 import type { JavaDiscovery, MinecraftRequirements, MinecraftVersion, ProvisionableServerSoftware } from '../types';
 import { errorMessage, titleCase } from '../utils';
 
@@ -249,17 +250,20 @@ export function CreateServerPage() {
                 </div>
               </fieldset>
 
-              <label className="field-group form-field"><span>Minecraft version</span>
-                <div className="select-wrap">
-                  <select value={version} onChange={(event) => setVersion(event.target.value)} disabled={loadingVersions} aria-label="Minecraft version">
-                    {loadingVersions && <option value="">Loading official versions…</option>}
-                    {!loadingVersions && versions.length === 0 && <option value="">No versions available</option>}
-                    {versions.map((item) => <option key={item.id} value={item.id}>{item.label ?? item.id}{item.stable === false ? ' (pre-release)' : ''}</option>)}
-                  </select>
-                  <Icon name="chevronDown" size={17} />
-                </div>
+              <div className="field-group form-field"><span>Minecraft version</span>
+                <CustomSelect
+                  value={version}
+                  onChange={(val) => setVersion(val)}
+                  disabled={loadingVersions}
+                  placeholder={loadingVersions ? 'Loading official versions…' : versions.length === 0 ? 'No versions available' : 'Select a Minecraft version…'}
+                  options={versions.map((item) => ({
+                    value: item.id,
+                    label: `${item.label ?? item.id}${item.stable === false ? ' (pre-release)' : ''}`,
+                  }))}
+                  aria-label="Minecraft version"
+                />
                 {selectedVersion?.releaseDate && <small className="input-note">Released {selectedVersion.releaseDate}</small>}
-              </label>
+              </div>
             </div>
           )}
 

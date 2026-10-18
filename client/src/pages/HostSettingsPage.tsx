@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
+import { CustomSelect } from '../components/CustomSelect';
 import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server } from '../types';
 
 export function HostSettingsPage() {
@@ -309,16 +310,17 @@ export function HostSettingsPage() {
                 <strong>Launch Mode</strong>
                 <p>Choose whether NodePilot starts silently in the background or with an open console window.</p>
               </div>
-              <div className="setting-action">
-                <select
-                  className="input-select"
+              <div className="setting-action" style={{ minWidth: '300px' }}>
+                <CustomSelect
                   value={settings?.launchMode ?? 'headless'}
-                  onChange={(e) => void handleUpdateOptions({ launchMode: e.target.value as 'headless' | 'windowed' })}
+                  onChange={(val) => void handleUpdateOptions({ launchMode: val as 'headless' | 'windowed' })}
                   disabled={saving}
-                >
-                  <option value="headless">Headless (Background, No Window)</option>
-                  <option value="windowed">Windowed (Interactive Terminal)</option>
-                </select>
+                  options={[
+                    { value: 'headless', label: 'Headless (Background, No Window)', description: 'Runs quietly in background' },
+                    { value: 'windowed', label: 'Windowed (Interactive Terminal)', description: 'Opens terminal window on launch' },
+                  ]}
+                  aria-label="NodePilot launch mode"
+                />
               </div>
             </div>
 
