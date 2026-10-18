@@ -18,6 +18,7 @@ export interface CustomSelectProps {
   id?: string;
   'aria-label'?: string;
   variant?: 'purple' | 'cyan' | 'default';
+  onOpenChange?: (isOpen: boolean) => void;
 }
 
 function normalizeOption(option: CustomSelectOption | string): CustomSelectOption {
@@ -37,8 +38,14 @@ export function CustomSelect({
   id,
   'aria-label': ariaLabel,
   variant = 'purple',
+  onOpenChange,
 }: CustomSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  const updateIsOpen = (nextOpen: boolean) => {
+    setIsOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const listboxRef = useRef<HTMLUListElement>(null);
@@ -53,7 +60,7 @@ export function CustomSelect({
 
     const handlePointerDown = (event: PointerEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+        updateIsOpen(false);
       }
     };
 
@@ -74,16 +81,16 @@ export function CustomSelect({
     if (disabled) return;
     if (!isOpen) {
       setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0);
-      setIsOpen(true);
+      updateIsOpen(true);
     } else {
-      setIsOpen(false);
+      updateIsOpen(false);
     }
   };
 
   const selectOption = (opt: CustomSelectOption) => {
     if (opt.disabled || disabled) return;
     onChange(opt.value);
-    setIsOpen(false);
+    updateIsOpen(false);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -93,7 +100,7 @@ export function CustomSelect({
       if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
         event.preventDefault();
         setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0);
-        setIsOpen(true);
+        updateIsOpen(true);
       }
       return;
     }
@@ -101,10 +108,10 @@ export function CustomSelect({
     switch (event.key) {
       case 'Escape':
         event.preventDefault();
-        setIsOpen(false);
+        updateIsOpen(false);
         break;
       case 'Tab':
-        setIsOpen(false);
+        updateIsOpen(false);
         break;
       case 'ArrowDown': {
         event.preventDefault();

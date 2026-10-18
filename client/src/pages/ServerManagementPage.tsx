@@ -3,11 +3,12 @@ import { Link, NavLink, useLocation, useNavigate, useParams } from 'react-router
 import { api, websocketUrl } from '../api';
 import { AddonsPanel } from './AddonsPanel';
 import { PlayersPanel } from './PlayersPanel';
+import { PropertiesPanel } from './PropertiesPanel';
 import { UsagePanel } from './UsagePanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServerTunnelCard } from '../components/ServerTunnelCard';
-import type { ConsoleLine, FileEntry, Server, ServerProperties } from '../types';
+import type { ConsoleLine, FileEntry, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
 type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'properties' | 'files';
@@ -182,84 +183,6 @@ function ConsolePanel({ server }: { server: Server }) {
         <button className="button button-primary command-send" disabled={!command.trim() || server.status !== 'running' || sending} aria-label="Send command"><Icon name="send" size={17} /></button>
       </form>
       {server.status !== 'running' && <p className="input-note console-hint"><Icon name="info" size={14} /> Commands are available while the server is running.</p>}
-    </section>
-  );
-}
-
-function PropertiesPanel({ serverId }: { serverId: string }) {
-  const [values, setValues] = useState<ServerProperties>({});
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string>();
-  const [saved, setSaved] = useState(false);
-  const [newKey, setNewKey] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(undefined);
-    try {
-      setValues(await api.properties(serverId));
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setLoading(false);
-    }
-  }, [serverId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const entries = useMemo(() => Object.entries(values).sort(([left], [right]) => left.localeCompare(right)), [values]);
-  const update = (key: string, value: string) => {
-    setSaved(false);
-    setValues((current) => ({ ...current, [key]: value }));
-  };
-  const remove = (key: string) => {
-    setSaved(false);
-    setValues((current) => Object.fromEntries(Object.entries(current).filter(([itemKey]) => itemKey !== key)));
-  };
-  const add = () => {
-    const key = newKey.trim();
-    if (!key) return;
-    if (!/^[A-Za-z0-9._-]+$/.test(key)) {
-      setError('Property names can use letters, numbers, dots, underscores, and hyphens.');
-      return;
-    }
-    if (key in values) {
-      setError('That property already exists.');
-      return;
-    }
-    setError(undefined);
-    setValues((current) => ({ ...current, [key]: '' }));
-    setNewKey('');
-    setSaved(false);
-  };
-  const save = async () => {
-    setSaving(true);
-    setSaved(false);
-    setError(undefined);
-    try {
-      const response = await api.saveProperties(serverId, values);
-      setValues(response);
-      setSaved(true);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section className="management-panel panel properties-panel">
-      <div className="panel-heading properties-heading"><div><h3>server.properties</h3><p>Edit the Minecraft server settings NodePilot reads from the local server directory.</p></div><div className="panel-heading-actions">{saved && <span className="saved-indicator"><Icon name="check" size={16} /> Saved</span>}<button className="button button-secondary button-icon" onClick={() => void load()} disabled={loading || saving}><Icon name="refresh" size={16} /> Reload</button><button className="button button-primary" type="button" onClick={() => void save()} disabled={loading || saving}>{saving ? 'Saving…' : 'Save changes'}</button></div></div>
-      {error && <div className="inline-alert alert-error" role="alert"><Icon name="warning" size={18} /><div><strong>Properties couldn’t be saved.</strong><span>{error}</span></div></div>}
-      {loading ? <div className="settings-skeleton"><span /><span /><span /><span /></div> : (
-        <div className="properties-table">
-          <div className="properties-table-head"><span>Property</span><span>Value</span><span className="sr-only">Actions</span></div>
-          {entries.map(([key, value]) => <div className="property-row" key={key}><code>{key}</code><input value={value} onChange={(event) => update(key, event.target.value)} aria-label={key} /><button className="icon-button destructive-soft" type="button" onClick={() => remove(key)} title={`Remove ${key}`} aria-label={`Remove ${key}`}><Icon name="close" size={16} /></button></div>)}
-          {entries.length === 0 && <p className="empty-inline">This server.properties file contains no settings yet.</p>}
-        </div>
-      )}
-      <div className="add-property"><input value={newKey} onChange={(event) => setNewKey(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add(); } }} placeholder="new.property" aria-label="New property name" /><button type="button" className="button button-secondary" onClick={add}><Icon name="plus" size={16} /> Add property</button></div>
     </section>
   );
 }
