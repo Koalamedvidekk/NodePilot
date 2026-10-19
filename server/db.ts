@@ -117,6 +117,20 @@ export function openDatabase(databasePath: string): SqliteDatabase {
       FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS server_tunnels_local_port_idx ON server_tunnels(local_port);
+
+    CREATE TABLE IF NOT EXISTS server_settings (
+      server_id TEXT PRIMARY KEY,
+      auto_wake INTEGER NOT NULL DEFAULT 0,
+      wake_proxy_port INTEGER,
+      auto_sleep INTEGER NOT NULL DEFAULT 0,
+      idle_timeout_minutes INTEGER NOT NULL DEFAULT 15,
+      min_memory_mb INTEGER,
+      custom_jvm_args TEXT,
+      shutdown_timeout_seconds INTEGER NOT NULL DEFAULT 20,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
   `);
 
   return database;

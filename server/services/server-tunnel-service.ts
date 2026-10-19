@@ -1,4 +1,5 @@
 import type { ServerRepository } from '../repositories/server-repository.js';
+import type { ServerSettingsRepository } from '../repositories/server-settings-repository.js';
 import type { ServerTunnelRepository } from '../repositories/server-tunnel-repository.js';
 import type { PlayitService } from './playit-service.js';
 import type { PlayitStatus, ServerTunnel, TunnelStatus } from '../types.js';
@@ -8,6 +9,7 @@ export class ServerTunnelService {
     private readonly repository: ServerTunnelRepository,
     private readonly serverRepo: ServerRepository,
     private readonly playit: PlayitService,
+    private readonly settingsRepo?: ServerSettingsRepository,
   ) {}
 
   /**
@@ -80,6 +82,21 @@ export class ServerTunnelService {
       // Query Playit API for matching tunnel on this local port
       try {
         matchingTunnel = await this.playit.findTunnelForPort(localPort);
+        if (!matchingTunnel) {
+          const settings = this.settingsRepo?.find(serverId);
+          const server = this.serverRepo.find(serverId);
+          if (settings?.autoWake && server && localPort === server.port) {
+            const defaultWakePort = server.port >= 55535 ? server.port - 10000 : server.port + 10000;
+            const wakePort = settings.wakeProxyPort ?? defaultWakePort;
+            const altTunnel = await this.playit.findTunnelForPort(wakePort);
+            if (altTunnel) {
+              matchingTunnel = altTunnel;
+              if (altTunnel.localPort) {
+                localPort = altTunnel.localPort;
+              }
+            }
+          }
+        }
         if (matchingTunnel) {
           status = running ? 'connected' : 'disconnected';
           lastError = null;

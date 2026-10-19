@@ -280,6 +280,10 @@ export class PlayerService {
     this.runtime.on('event', (event: ServerEvent) => this.observeRuntime(event));
   }
 
+  getOnlinePlayerCount(serverId: string): number {
+    return this.onlineNames.get(serverId)?.size ?? 0;
+  }
+
   bridgeStatus(server: ServerRecord): BridgeStatus & { available: boolean; message?: string } {
     const status = this.bridge.status(server.id);
     if (server.software !== 'paper') {

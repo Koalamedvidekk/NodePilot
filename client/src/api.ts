@@ -34,6 +34,10 @@ import type {
   PlayitStatus,
   HostDiagnostics,
   ServerTunnel,
+  ServerSettings,
+  ServerSettingsDetails,
+  UpdateServerSettingsInput,
+  ResetServerSettingsSection,
 } from './types';
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
@@ -792,6 +796,42 @@ export const api = {
       await request<{ ok: boolean }>(`/servers/${encodeURIComponent(serverId)}/tunnel`, {
         method: 'DELETE',
       }),
+    );
+  },
+
+  async getServerSettings(serverId: string): Promise<ServerSettingsDetails> {
+    return unwrap(
+      await request<ServerSettingsDetails>(`/servers/${encodeURIComponent(serverId)}/settings`),
+    );
+  },
+
+  async updateServerSettings(
+    serverId: string,
+    input: UpdateServerSettingsInput,
+  ): Promise<{ ok: boolean; restartRequired?: boolean; settings: ServerSettings; runtime?: ServerSettingsDetails['runtime'] }> {
+    return unwrap(
+      await request<{ ok: boolean; restartRequired?: boolean; settings: ServerSettings; runtime?: ServerSettingsDetails['runtime'] }>(
+        `/servers/${encodeURIComponent(serverId)}/settings`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(input),
+        },
+      ),
+    );
+  },
+
+  async resetServerSettings(
+    serverId: string,
+    section: ResetServerSettingsSection,
+  ): Promise<{ ok: boolean; settings: ServerSettings; runtime?: ServerSettingsDetails['runtime'] }> {
+    return unwrap(
+      await request<{ ok: boolean; settings: ServerSettings; runtime?: ServerSettingsDetails['runtime'] }>(
+        `/servers/${encodeURIComponent(serverId)}/settings/reset`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ section }),
+        },
+      ),
     );
   },
 };

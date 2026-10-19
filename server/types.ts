@@ -182,3 +182,29 @@ export interface FileEntry {
   size: number;
   modifiedAt: string;
 }
+
+export interface ServerSettingsRecord {
+  serverId: string;
+  autoWake: boolean;
+  wakeProxyPort: number | null;
+  autoSleep: boolean;
+  idleTimeoutMinutes: number;
+  minMemoryMb: number | null;
+  customJvmArgs: string[];
+  shutdownTimeoutSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServerSettingsInput {
+  autoWake?: boolean;
+  wakeProxyPort?: number | null;
+  autoSleep?: boolean;
+  idleTimeoutMinutes?: number;
+  minMemoryMb?: number | null;
+  maxMemoryMb?: number;
+  customJvmArgs?: string[];
+  autoStart?: AutoStartMode;
+  shutdownTimeoutSeconds?: number;
+}
+

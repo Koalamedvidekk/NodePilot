@@ -24,6 +24,7 @@ import { runInteractiveSetup, shouldRunFirstTimeSetup } from './setup.js';
 import { ServerRepository } from './repositories/server-repository.js';
 import { HostSettingsRepository } from './repositories/host-settings-repository.js';
 import { ServerTunnelRepository } from './repositories/server-tunnel-repository.js';
+import { ServerSettingsRepository } from './repositories/server-settings-repository.js';
 import { FileService } from './services/file-service.js';
 import { JavaService } from './services/java-service.js';
 import { ImportService } from './services/import-service.js';
@@ -38,7 +39,10 @@ import { StartupService } from './services/startup-service.js';
 import { PlayitService } from './services/playit-service.js';
 import { AutoStartService } from './services/auto-start-service.js';
 import { ServerTunnelService } from './services/server-tunnel-service.js';
-import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
+import { AutoSleepService } from './services/auto-sleep-service.js';
+import { WakeProxyService } from './services/wake-proxy-service.js';
+import { parseMemoryMb, validateCustomJvmArgs } from './lib/settings-helpers.js';
+import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, JavaInstallation, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
 
 let config = getConfig();
 let currentListeningHost = config.host;
@@ -109,6 +113,25 @@ const hostStartupEnableSchema = z.object({
 });
 const serverAutoStartSchema = z.object({
   autoStart: z.enum(['always', 'disabled']),
+});
+const serverSettingsSectionSchema = z.enum(['auto-wake', 'auto-sleep', 'java', 'startup']);
+const resetServerSettingsSchema = z.object({
+  section: serverSettingsSectionSchema,
+});
+const updateServerSettingsSchema = z.object({
+  autoWake: z.boolean().optional(),
+  wakeProxyPort: z.number().int().min(1).max(65_535).nullable().optional(),
+  autoSleep: z.boolean().optional(),
+  idleTimeoutMinutes: z.number().int().min(1).max(1_440).optional(),
+  minMemory: z.union([z.string().min(1).max(32), z.number().int()]).nullable().optional(),
+  maxMemory: z.union([z.string().min(1).max(32), z.number().int()]).optional(),
+  minMemoryMb: z.number().int().min(256).max(65_536).nullable().optional(),
+  maxMemoryMb: z.number().int().min(256).max(65_536).optional(),
+  customJvmArgs: z.array(z.string().max(256)).optional(),
+  autoStart: z.enum(['always', 'disabled']).optional(),
+  shutdownTimeoutSeconds: z.number().int().min(5).max(300).optional(),
+  name: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f\r\n]/.test(value), 'Name cannot contain control characters.').optional(),
+  port: z.number().int().min(1).max(65_535).optional(),
 });
 const playitSecretSchema = z.object({
   secretKey: z.string().trim().min(1).max(256),
@@ -311,10 +334,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   const startup = new StartupService(hostSettings, path.resolve('.'));
   const playit = new PlayitService(config.dataDirectory);
   const serverTunnelRepo = new ServerTunnelRepository(database);
-  const serverTunnels = new ServerTunnelService(serverTunnelRepo, repository, playit);
+  const settingsRepository = new ServerSettingsRepository(database);
+  const serverTunnels = new ServerTunnelService(serverTunnelRepo, repository, playit, settingsRepository);
   const minecraft = new MinecraftService(repository, config.serversDirectory);
   const java = new JavaService();
-  const runtime = new ServerRuntime(repository, config.serversDirectory);
+  const runtime = new ServerRuntime(repository, config.serversDirectory, settingsRepository);
   const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
   const files = new FileService(config.serversDirectory);
@@ -322,6 +346,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   const addons = new AddonService(config.serversDirectory, config.backupsDirectory, database);
   const bridge = new PlayerBridgeManager(database);
   const players = new PlayerService(config.serversDirectory, runtime, bridge);
+  const autoSleep = new AutoSleepService(repository, settingsRepository, runtime, players);
+  autoSleep.start();
+  const wakeProxy = new WakeProxyService(repository, settingsRepository, serverTunnelRepo, playit, runtime, java);
+  wakeProxy.start();
   const system = new SystemService(repository, config.dataDirectory);
   const app = Fastify({ logger: { level: process.env.NODEPILOT_LOG_LEVEL ?? 'info' }, bodyLimit: 1_100_000 });
 
@@ -1013,6 +1041,263 @@ export async function buildApp(): Promise<FastifyInstance> {
     return { ok };
   });
 
+  // Server Settings (Auto-Wake, Auto-Sleep, Java & Performance, Startup & Shutdown, General)
+  app.get('/api/servers/:id/settings', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    const server = requireServer(repository, id);
+    const settings = settingsRepository.getOrCreate(id);
+    const wakeProxyStatus = await wakeProxy.getStatus(id);
+    const autoSleepStatus = autoSleep.getStatus(id);
+    const playitStatus = await playit.getStatus();
+    const tunnel = serverTunnelRepo.find(id);
+
+    const isBedrock = server.software === 'bedrock' || server.game === 'minecraft-bedrock' || server.startupConfig.mode === 'executable';
+    let detectedJava: JavaInstallation | null = null;
+    let availableJava: JavaInstallation[] = [];
+
+    if (!isBedrock) {
+      try {
+        availableJava = await java.list();
+        if (server.javaPath) {
+          detectedJava = availableJava.find((j) => j.path === server.javaPath) ?? null;
+        }
+        if (!detectedJava && server.requiredJavaMajor) {
+          const usable = await java.findUsable(server.requiredJavaMajor, server.javaPath);
+          if (usable) {
+            detectedJava = usable.installation;
+          }
+        }
+      } catch {
+        // ignore discovery failures
+      }
+    }
+
+    return {
+      settings: {
+        serverId: server.id,
+        autoWake: settings.autoWake,
+        wakeProxyPort: settings.wakeProxyPort,
+        autoSleep: settings.autoSleep,
+        idleTimeoutMinutes: settings.idleTimeoutMinutes,
+        minMemoryMb: settings.minMemoryMb,
+        maxMemoryMb: server.memoryMb,
+        customJvmArgs: settings.customJvmArgs,
+        autoStart: server.autoStart ?? 'disabled',
+        shutdownTimeoutSeconds: settings.shutdownTimeoutSeconds,
+        createdAt: settings.createdAt,
+        updatedAt: settings.updatedAt,
+      },
+      runtime: {
+        status: publicStatus(server.status),
+        isRunning: ['starting', 'running', 'stopping'].includes(server.status),
+        isBedrock,
+        software: server.software,
+        flavor: server.flavor,
+        version: server.version,
+        loaderVersion: server.loaderVersion,
+        startupConfig: server.startupConfig,
+        port: server.port,
+        directory: server.directory,
+        javaPath: server.javaPath,
+        requiredJavaMajor: server.requiredJavaMajor,
+        detectedJava,
+        availableJava,
+        wakeProxy: wakeProxyStatus,
+        autoSleep: autoSleepStatus,
+        playit: playitStatus,
+        tunnel,
+      },
+    };
+  });
+
+  app.put('/api/servers/:id/settings', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    let server = requireServer(repository, id);
+    const currentSettings = settingsRepository.getOrCreate(id);
+    const input = updateServerSettingsSchema.parse(request.body);
+
+    const isServerActive = ['starting', 'running', 'stopping'].includes(server.status);
+    let restartRequired = false;
+
+    // 1. Port validation
+    if (input.port !== undefined && input.port !== server.port) {
+      if (isServerActive) {
+        throw new AppError(409, 'server_active', 'Stop the server before changing its port.');
+      }
+      if (repository.portIsAssigned(input.port, id)) {
+        throw new AppError(409, 'port_assigned', `Port ${input.port} is assigned to another managed server.`);
+      }
+      await assertPortAvailable(input.port);
+    }
+
+    // 2. Wake Proxy Port validation
+    const targetServerPort = input.port ?? server.port;
+    if (input.wakeProxyPort !== undefined && input.wakeProxyPort !== null) {
+      if (input.wakeProxyPort === targetServerPort) {
+        throw new AppError(400, 'wake_port_conflict', `Wake proxy port (${input.wakeProxyPort}) cannot be identical to the Minecraft server port.`);
+      }
+    }
+
+    // 3. Memory validation & parsing
+    let parsedMinMb: number | null | undefined = undefined;
+    if (input.minMemory !== undefined) {
+      parsedMinMb = parseMemoryMb(input.minMemory);
+    } else if (input.minMemoryMb !== undefined) {
+      parsedMinMb = input.minMemoryMb;
+    }
+
+    let parsedMaxMb: number | undefined = undefined;
+    if (input.maxMemory !== undefined) {
+      parsedMaxMb = parseMemoryMb(input.maxMemory) ?? undefined;
+    } else if (input.maxMemoryMb !== undefined) {
+      parsedMaxMb = input.maxMemoryMb;
+    }
+
+    const effectiveMaxMb = parsedMaxMb ?? server.memoryMb;
+    const effectiveMinMb = parsedMinMb !== undefined ? parsedMinMb : currentSettings.minMemoryMb;
+
+    if (effectiveMinMb !== null && effectiveMinMb !== undefined && effectiveMinMb > effectiveMaxMb) {
+      throw new AppError(
+        400,
+        'min_memory_exceeds_max',
+        `Minimum heap allocation (${effectiveMinMb} MB) cannot exceed maximum heap allocation (${effectiveMaxMb} MB).`,
+      );
+    }
+
+    // 4. Custom JVM Arguments validation
+    let validatedJvmArgs: string[] | undefined = undefined;
+    if (input.customJvmArgs !== undefined) {
+      validatedJvmArgs = validateCustomJvmArgs(input.customJvmArgs);
+    }
+
+    // 5. Check if changes require restart
+    if (isServerActive) {
+      if (parsedMaxMb !== undefined && parsedMaxMb !== server.memoryMb) {
+        restartRequired = true;
+      }
+      if (parsedMinMb !== undefined && parsedMinMb !== currentSettings.minMemoryMb) {
+        restartRequired = true;
+      }
+      if (
+        validatedJvmArgs !== undefined &&
+        JSON.stringify(validatedJvmArgs) !== JSON.stringify(currentSettings.customJvmArgs)
+      ) {
+        restartRequired = true;
+      }
+      if (
+        input.shutdownTimeoutSeconds !== undefined &&
+        input.shutdownTimeoutSeconds !== currentSettings.shutdownTimeoutSeconds
+      ) {
+        restartRequired = true;
+      }
+    }
+
+    // 6. Apply updates
+    if (input.name !== undefined && input.name !== server.name) {
+      server = repository.update(id, { name: input.name });
+    }
+    if (input.port !== undefined && input.port !== server.port) {
+      server = repository.update(id, { port: input.port });
+      await serverTunnels.handlePortChanged(id, input.port).catch(() => undefined);
+    }
+    if (parsedMaxMb !== undefined && parsedMaxMb !== server.memoryMb) {
+      server = repository.update(id, { memoryMb: parsedMaxMb });
+    }
+    if (input.autoStart !== undefined && input.autoStart !== server.autoStart) {
+      server = repository.setAutoStart(id, input.autoStart);
+    }
+
+    const updatedSettings = settingsRepository.update(id, {
+      autoWake: input.autoWake,
+      wakeProxyPort: input.wakeProxyPort,
+      autoSleep: input.autoSleep,
+      idleTimeoutMinutes: input.idleTimeoutMinutes,
+      minMemoryMb: parsedMinMb,
+      customJvmArgs: validatedJvmArgs,
+      shutdownTimeoutSeconds: input.shutdownTimeoutSeconds,
+    });
+
+    void wakeProxy.reconcileAll();
+
+    const wakeProxyStatus = await wakeProxy.getStatus(id);
+    const autoSleepStatus = autoSleep.getStatus(id);
+    const playitStatus = await playit.getStatus();
+    const tunnel = serverTunnelRepo.find(id);
+
+    return {
+      ok: true,
+      restartRequired,
+      settings: {
+        serverId: server.id,
+        autoWake: updatedSettings.autoWake,
+        wakeProxyPort: updatedSettings.wakeProxyPort,
+        autoSleep: updatedSettings.autoSleep,
+        idleTimeoutMinutes: updatedSettings.idleTimeoutMinutes,
+        minMemoryMb: updatedSettings.minMemoryMb,
+        maxMemoryMb: server.memoryMb,
+        customJvmArgs: updatedSettings.customJvmArgs,
+        autoStart: server.autoStart ?? 'disabled',
+        shutdownTimeoutSeconds: updatedSettings.shutdownTimeoutSeconds,
+        createdAt: updatedSettings.createdAt,
+        updatedAt: updatedSettings.updatedAt,
+      },
+      runtime: {
+        status: publicStatus(server.status),
+        isRunning: isServerActive,
+        port: server.port,
+        wakeProxy: wakeProxyStatus,
+        autoSleep: autoSleepStatus,
+        playit: playitStatus,
+        tunnel,
+      },
+    };
+  });
+
+  app.post('/api/servers/:id/settings/reset', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    let server = requireServer(repository, id);
+    const { section } = resetServerSettingsSchema.parse(request.body);
+
+    const updatedSettings = settingsRepository.resetSection(id, section);
+    if (section === 'startup') {
+      server = repository.setAutoStart(id, 'disabled');
+    }
+
+    void wakeProxy.reconcileAll();
+
+    const wakeProxyStatus = await wakeProxy.getStatus(id);
+    const autoSleepStatus = autoSleep.getStatus(id);
+    const playitStatus = await playit.getStatus();
+    const tunnel = serverTunnelRepo.find(id);
+
+    return {
+      ok: true,
+      settings: {
+        serverId: server.id,
+        autoWake: updatedSettings.autoWake,
+        wakeProxyPort: updatedSettings.wakeProxyPort,
+        autoSleep: updatedSettings.autoSleep,
+        idleTimeoutMinutes: updatedSettings.idleTimeoutMinutes,
+        minMemoryMb: updatedSettings.minMemoryMb,
+        maxMemoryMb: server.memoryMb,
+        customJvmArgs: updatedSettings.customJvmArgs,
+        autoStart: server.autoStart ?? 'disabled',
+        shutdownTimeoutSeconds: updatedSettings.shutdownTimeoutSeconds,
+        createdAt: updatedSettings.createdAt,
+        updatedAt: updatedSettings.updatedAt,
+      },
+      runtime: {
+        status: publicStatus(server.status),
+        isRunning: ['starting', 'running', 'stopping'].includes(server.status),
+        port: server.port,
+        wakeProxy: wakeProxyStatus,
+        autoSleep: autoSleepStatus,
+        playit: playitStatus,
+        tunnel,
+      },
+    };
+  });
+
   app.get('/api/bridge/connect', { websocket: true }, (socket, request) => {
     if (!isAllowedRequestOrigin(request.headers.origin)) {
       socket.close(1008, 'Origin not permitted');
@@ -1079,6 +1364,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.decorate('autoStart', autoStart);
   app.addHook('onClose', async () => {
+    autoSleep.stop();
+    wakeProxy.stop();
     bridge.shutdown();
     await metrics.shutdown();
     await runtime.shutdown();

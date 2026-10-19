@@ -5,13 +5,14 @@ import { AddonsPanel } from './AddonsPanel';
 import { PlayersPanel } from './PlayersPanel';
 import { PropertiesPanel } from './PropertiesPanel';
 import { UsagePanel } from './UsagePanel';
+import { ServerSettingsPanel } from './ServerSettingsPanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServerTunnelCard } from '../components/ServerTunnelCard';
 import type { ConsoleLine, FileEntry, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
-type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'properties' | 'files';
+type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'properties' | 'files' | 'settings';
 
 export type AddonCategory = 'plugins' | 'mods' | null;
 
@@ -30,6 +31,7 @@ function tabFromPath(pathname: string): ManagementTab {
   if (pathname.endsWith('/addons') || pathname.endsWith('/plugins') || pathname.endsWith('/mods')) return 'addons';
   if (pathname.endsWith('/properties')) return 'properties';
   if (pathname.endsWith('/files')) return 'files';
+  if (pathname.endsWith('/settings')) return 'settings';
   return 'overview';
 }
 
@@ -815,14 +817,15 @@ export function ServerManagementPage() {
       ? { tab: 'addons' as const, label: 'Mods', icon: 'box' as const, to: `${base}/mods` }
       : null;
 
-  const tabs: Array<{ tab: ManagementTab; label: string; icon: 'dashboard' | 'activity' | 'terminal' | 'users' | 'box' | 'settings' | 'files'; to: string }> = [
+  const tabs: Array<{ tab: ManagementTab; label: string; icon: 'dashboard' | 'activity' | 'terminal' | 'users' | 'box' | 'settings' | 'files' | 'sliders'; to: string }> = [
     { tab: 'overview', label: 'Overview', icon: 'dashboard', to: base },
     { tab: 'usage', label: 'Usage', icon: 'activity', to: `${base}/usage` },
     { tab: 'console', label: 'Console', icon: 'terminal', to: `${base}/console` },
     { tab: 'players', label: 'Players', icon: 'users', to: `${base}/players` },
     ...(addonTab ? [addonTab] : []),
-    { tab: 'properties', label: 'Properties', icon: 'settings', to: `${base}/properties` },
+    { tab: 'properties', label: 'Properties', icon: 'sliders', to: `${base}/properties` },
     { tab: 'files', label: 'Files', icon: 'files', to: `${base}/files` },
+    { tab: 'settings', label: 'Settings', icon: 'settings', to: `${base}/settings` },
   ];
 
   return (
@@ -877,6 +880,13 @@ export function ServerManagementPage() {
       )}
       {tab === 'properties' && <PropertiesPanel serverId={server.id} />}
       {tab === 'files' && <FilesPanel serverId={server.id} />}
+      {tab === 'settings' && (
+        <ServerSettingsPanel
+          server={server}
+          onServerUpdated={load}
+          onNavigateToTab={(target) => navigate(`${base}/${target}`)}
+        />
+      )}
     </section>
   );
 }

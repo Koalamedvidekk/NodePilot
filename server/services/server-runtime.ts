@@ -7,6 +7,7 @@ import path from 'node:path';
 import { AppError } from '../lib/errors.js';
 import { resolveInside, resolveManagedServerRoot } from '../lib/paths.js';
 import type { ServerRepository } from '../repositories/server-repository.js';
+import type { ServerSettingsRepository } from '../repositories/server-settings-repository.js';
 import type { ConsoleLine, ServerEvent, ServerRecord, ServerStartupConfig, ServerStatus } from '../types.js';
 
 const MAX_LOG_LINES = 1_200;
@@ -51,6 +52,7 @@ async function launchArguments(
   startup: ServerStartupConfig,
   initialMemoryMb: number,
   maximumMemoryMb: number,
+  customJvmArgs: string[] = [],
 ): Promise<{ args: string[]; description: string }> {
   if (startup.mode === 'executable') {
     return {
@@ -61,7 +63,7 @@ async function launchArguments(
   if (!startup.gameArguments.every(validGameArgument)) {
     throw new AppError(409, 'unsafe_startup_arguments', 'NodePilot refused unexpected launcher arguments. Reinstall this server.');
   }
-  const memory = ['-Xms' + initialMemoryMb + 'M', '-Xmx' + maximumMemoryMb + 'M'];
+  const memory = ['-Xms' + initialMemoryMb + 'M', '-Xmx' + maximumMemoryMb + 'M', ...customJvmArgs];
   if (startup.mode === 'jar') {
     const jarPath = await requireRegularManagedFile(directory, startup.jarPath, 'server JAR');
     return {
@@ -127,6 +129,7 @@ export class ServerRuntime extends EventEmitter {
   constructor(
     private readonly repository: ServerRepository,
     private readonly serversDirectory: string,
+    private readonly settingsRepository?: ServerSettingsRepository,
   ) {
     super();
   }
@@ -198,8 +201,10 @@ export class ServerRuntime extends EventEmitter {
       if (!javaPath) {
         throw new AppError(422, 'java_missing', 'A compatible Java installation is required to start this server.');
       }
-      const initialMemoryMb = initialHeapMb(server.memoryMb);
-      const launch = await launchArguments(directory, startup, initialMemoryMb, server.memoryMb);
+      const settings = this.settingsRepository?.find(server.id);
+      const initialMemoryMb = settings?.minMemoryMb ?? initialHeapMb(server.memoryMb);
+      const customJvmArgs = settings?.customJvmArgs ?? [];
+      const launch = await launchArguments(directory, startup, initialMemoryMb, server.memoryMb, customJvmArgs);
       const args = launch.args;
       try {
         child = spawn(javaPath, args, {
@@ -307,17 +312,20 @@ export class ServerRuntime extends EventEmitter {
       // The close handler will record any outcome. Continue with bounded forced cleanup.
     }
 
+    const settings = this.settingsRepository?.find(server.id);
+    const gracefulStopMs = (settings?.shutdownTimeoutSeconds ?? 20) * 1000;
+
     const gracefulTimer = setTimeout(() => {
       if (this.processes.get(server.id) !== runtime) return;
       this.appendLog(server.id, { timestamp: new Date().toISOString(), stream: 'system', message: 'Graceful shutdown timed out; terminating the tracked process.' });
       this.terminateTrackedProcess(runtime.child);
-    }, GRACEFUL_STOP_MS);
+    }, gracefulStopMs);
     gracefulTimer.unref();
     const hardTimer = setTimeout(() => {
       if (this.processes.get(server.id) !== runtime) return;
       this.appendLog(server.id, { timestamp: new Date().toISOString(), stream: 'system', message: 'Forcing the tracked server process to stop.' });
       this.terminateTrackedProcess(runtime.child, true);
-    }, GRACEFUL_STOP_MS + FORCE_STOP_MS);
+    }, gracefulStopMs + FORCE_STOP_MS);
     hardTimer.unref();
 
     let stopTimeout: NodeJS.Timeout | undefined;
@@ -325,7 +333,7 @@ export class ServerRuntime extends EventEmitter {
       await Promise.race([
         runtime.closePromise,
         new Promise<void>((_resolve, reject) => {
-          stopTimeout = setTimeout(() => reject(new AppError(503, 'server_stop_timeout', 'The server did not stop after the configured timeout.')), GRACEFUL_STOP_MS + FORCE_STOP_MS + 5_000);
+          stopTimeout = setTimeout(() => reject(new AppError(503, 'server_stop_timeout', 'The server did not stop after the configured timeout.')), gracefulStopMs + FORCE_STOP_MS + 5_000);
           stopTimeout.unref();
         }),
       ]);

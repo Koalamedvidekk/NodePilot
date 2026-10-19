@@ -443,3 +443,82 @@ export interface HostDiagnostics {
   memoryUsageMb: number;
   recentLogs: Array<{ timestamp: string; level: 'info' | 'warn' | 'error'; message: string }>;
 }
+
+export interface WakeProxyStatus {
+  status: 'active' | 'standby' | 'disabled' | 'unsupported';
+  wakePort: number | null;
+  minecraftPort: number;
+  publicAddress: string | null;
+  playitInstalled: boolean;
+  playitRunning: boolean;
+  tunnelConfigured: boolean;
+  message?: string;
+}
+
+export interface AutoSleepStatus {
+  enabled: boolean;
+  idleTimeoutMinutes: number;
+  isIdle: boolean;
+  countdownSeconds: number | null;
+  onlinePlayersCount: number;
+}
+
+export interface ServerSettings {
+  serverId: string;
+  autoWake: boolean;
+  wakeProxyPort: number | null;
+  autoSleep: boolean;
+  idleTimeoutMinutes: number;
+  minMemoryMb: number | null;
+  maxMemoryMb: number;
+  customJvmArgs: string[];
+  autoStart: 'always' | 'disabled';
+  shutdownTimeoutSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServerSettingsRuntime {
+  status: ServerStatus;
+  isRunning: boolean;
+  isBedrock: boolean;
+  software?: string;
+  flavor?: string;
+  version?: string;
+  loaderVersion?: string | null;
+  startupConfig?: ServerStartupConfig;
+  port: number;
+  directory: string;
+  javaPath: string | null;
+  requiredJavaMajor?: number | null;
+  detectedJava: JavaInstallation | null;
+  availableJava: JavaInstallation[];
+  wakeProxy: WakeProxyStatus;
+  autoSleep: AutoSleepStatus;
+  playit: PlayitStatus;
+  tunnel: ServerTunnel | null;
+}
+
+export interface ServerSettingsDetails {
+  settings: ServerSettings;
+  runtime: ServerSettingsRuntime;
+}
+
+export interface UpdateServerSettingsInput {
+  autoWake?: boolean;
+  wakeProxyPort?: number | null;
+  autoSleep?: boolean;
+  idleTimeoutMinutes?: number;
+  minMemory?: string | number | null;
+  maxMemory?: string | number;
+  minMemoryMb?: number | null;
+  maxMemoryMb?: number;
+  customJvmArgs?: string[];
+  autoStart?: 'always' | 'disabled';
+  shutdownTimeoutSeconds?: number;
+  name?: string;
+  port?: number;
+}
+
+export type ResetServerSettingsSection = 'auto-wake' | 'auto-sleep' | 'java' | 'startup';
+
