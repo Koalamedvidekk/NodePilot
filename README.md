@@ -36,16 +36,43 @@ mandatory telemetry required.
 
 ## Requirements
 
-- Node.js **20.19 or later** (Node 22 LTS is a good choice).
+- Node.js **20.19 or later** (Node 22 LTS is automatically installed on startup if missing).
 - A Java runtime compatible with the selected Minecraft version. NodePilot scans `JAVA_HOME`,
   the system path, and common installation locations, then reports discovered versions.
-  Modern Minecraft versions normally require Java 17 or Java 21; the creation screen surfaces
-  compatibility before a server is started.
+  Modern Minecraft versions normally require Java 17 or Java 21; NodePilot can automatically download and install Eclipse Adoptium OpenJDK (Java 8, 11, 16, 17, 21, 25).
+  if the required runtime is not already installed on your system.
 - An internet connection only while fetching version metadata and downloading a server JAR.
 - **Git on PATH for Spigot only.** Its official BuildTools compiles the selected release locally,
   so it can take longer than direct server downloads.
 
 ## Install and run
+
+### Quick Start (Automatic Setup)
+
+#### Windows
+Simply clone or download the ZIP, then run `start.bat` (or double-click it in Windows):
+```powershell
+git clone https://github.com/Koalamedvidekk/NodePilot.git
+cd NodePilot
+.\start.bat
+```
+> If Node.js is not installed on your system, `start.bat` will automatically download and set up Node.js LTS for you!
+
+Or install directly via a one-line PowerShell command:
+```powershell
+irm https://raw.githubusercontent.com/Koalamedvidekk/NodePilot/main/install.ps1 | iex
+```
+
+#### Linux & macOS
+```bash
+git clone https://github.com/Koalamedvidekk/NodePilot.git
+cd NodePilot
+chmod +x start.sh
+./start.sh
+```
+> If Node.js is missing, `start.sh` automatically downloads and configures the official Node.js LTS binary package.
+
+### Manual Setup
 
 ### Windows (PowerShell)
 

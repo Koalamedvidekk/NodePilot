@@ -128,6 +128,11 @@ export interface JavaDiscovery {
   message?: string;
 }
 
+export interface DownloadableJavaInfo {
+  versions: number[];
+  installedMajors: number[];
+}
+
 export interface MinecraftRequirements {
   requiredJavaMajor?: number;
   compatibleJava?: JavaInstallation[];

@@ -96,6 +96,7 @@ const fileCreateFolderSchema = z.object({
 const fileDeleteSchema = z.object({
   path: z.string().min(1).max(512),
 });
+const installJavaSchema = z.object({ major: z.number().int().min(8).max(35) });
 const pinVerifySchema = z.object({ pin: z.string().min(1).max(64) });
 const networkUpdateSchema = z.object({
   host: z.enum(['127.0.0.1', '0.0.0.0']),
@@ -337,7 +338,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const settingsRepository = new ServerSettingsRepository(database);
   const serverTunnels = new ServerTunnelService(serverTunnelRepo, repository, playit, settingsRepository);
   const minecraft = new MinecraftService(repository, config.serversDirectory);
-  const java = new JavaService();
+  const java = new JavaService(config.dataDirectory);
   const runtime = new ServerRuntime(repository, config.serversDirectory, settingsRepository);
   const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
@@ -402,6 +403,19 @@ export async function buildApp(): Promise<FastifyInstance> {
     system: await system.summary(),
   }));
   app.get('/api/java', async () => ({ installations: await java.list() }));
+  app.get('/api/java/downloadable', async () => {
+    const installations = await java.list();
+    const installedMajors = Array.from(new Set(installations.map((item) => item.major)));
+    return {
+      versions: java.getDownloadableMajors(),
+      installedMajors,
+    };
+  });
+  app.post('/api/java/install', async (request) => {
+    const { major } = installJavaSchema.parse(request.body);
+    const installation = await java.downloadAndInstall(major);
+    return { ok: true, installation };
+  });
 
   app.get('/api/minecraft/versions', async (request) => {
     const input = versionQuerySchema.parse(request.query);

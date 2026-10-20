@@ -621,6 +621,81 @@ select option:hover {
 .java-state.missing { color: #ffafbd; background: rgba(255,111,142,.1); }
 .java-state.checking { color: #ffcf6c; background: rgba(255,209,106,.1); }
 .subtle-warning { color: #f0c976 !important; }
+
+.java-downloader-card {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(83, 216, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(83, 216, 255, 0.05);
+}
+
+.java-downloader-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.java-downloader-badge {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: rgba(83, 216, 255, 0.15);
+  color: #7ce2ff;
+  flex-shrink: 0;
+}
+
+.java-downloader-info h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e4e9ff;
+}
+
+.java-downloader-info p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.java-downloader-controls {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.java-version-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.java-version-dropdown {
+  background: #111422;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.java-version-dropdown:focus {
+  border-color: var(--cyan);
+}
+
+.button-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
 .review-section .section-heading > div > p:not(.eyebrow) { max-width: 600px; margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .review-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; margin: 19px 0; }
 .review-list div { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }

@@ -55,6 +55,11 @@ export function CreateServerPage() {
   const [playit, setPlayit] = useState<import('../types').PlayitStatus>();
   const [error, setError] = useState<string>();
   const [creating, setCreating] = useState(false);
+  const [installingJava, setInstallingJava] = useState(false);
+  const [javaInstallError, setJavaInstallError] = useState<string>();
+  const [javaInstallSuccess, setJavaInstallSuccess] = useState<string>();
+  const [downloadableMajors, setDownloadableMajors] = useState<number[]>([8, 11, 16, 17, 21, 25]);
+  const [selectedDownloadMajor, setSelectedDownloadMajor] = useState<number>(21);
 
   const switchEdition = (nextEdition: 'java' | 'bedrock') => {
     setEdition(nextEdition);
@@ -115,9 +120,44 @@ export function CreateServerPage() {
     return () => { active = false; };
   }, [software, version]);
 
+  useEffect(() => {
+    void api.downloadableJava()
+      .then((res) => {
+        if (res.versions && res.versions.length > 0) setDownloadableMajors(res.versions);
+      })
+      .catch(() => undefined);
+  }, []);
+
   const isBedrock = software === 'bedrock';
   const selectedVersion = useMemo(() => versions.find((item) => item.id === version), [versions, version]);
   const requiredJava = isBedrock ? null : (requirements?.requiredJavaMajor ?? selectedVersion?.javaMajor);
+
+  useEffect(() => {
+    if (requiredJava) {
+      setSelectedDownloadMajor(requiredJava);
+    }
+  }, [requiredJava]);
+
+  const handleInstallJava = async (targetMajor?: number) => {
+    const majorToInstall = targetMajor ?? requiredJava ?? selectedDownloadMajor ?? 21;
+    setInstallingJava(true);
+    setJavaInstallError(undefined);
+    setJavaInstallSuccess(undefined);
+    try {
+      const result = await api.installJava(majorToInstall);
+      setJavaInstallSuccess(`Successfully installed OpenJDK ${result.installation.major} (${result.installation.version})!`);
+      const updatedJava = await api.java();
+      setJava(updatedJava);
+      if (software !== 'bedrock' && version) {
+        const updatedReqs = await api.minecraftRequirements(software, version);
+        setRequirements(updatedReqs);
+      }
+    } catch (cause) {
+      setJavaInstallError(errorMessage(cause));
+    } finally {
+      setInstallingJava(false);
+    }
+  };
   const compatibleJava = isBedrock ? [] : (requirements?.compatibleJava ?? java?.installations.filter((item) => !requiredJava || !item.major || item.major >= requiredJava) ?? []);
   const javaReady = isBedrock || (Boolean(requirements) && compatibleJava.length > 0);
   const normalizedPort = port.trim() ? Number(port) : undefined;
@@ -304,6 +344,88 @@ export function CreateServerPage() {
                   </span>
                 </section>
               )}
+
+              {!isBedrock && !javaReady && !loadingJava && (
+                <div className="java-downloader-card">
+                  <div className="java-downloader-header">
+                    <div className="java-downloader-badge">
+                      <Icon name="download" size={20} />
+                    </div>
+                    <div className="java-downloader-info">
+                      <h4>
+                        {requiredJava
+                          ? `Java ${requiredJava} is required for this server`
+                          : 'No compatible Java installation found'}
+                      </h4>
+                      <p>
+                        Would you like NodePilot to download and install Eclipse Adoptium OpenJDK {requiredJava ?? selectedDownloadMajor} automatically?
+                      </p>
+                    </div>
+                  </div>
+
+                  {javaInstallError && (
+                    <div className="inline-alert alert-error" role="alert" style={{ marginTop: '12px' }}>
+                      <Icon name="warning" size={17} />
+                      <div>
+                        <strong>Installation failed.</strong>
+                        <span>{javaInstallError}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {javaInstallSuccess && (
+                    <div className="inline-alert alert-success" style={{ marginTop: '12px' }}>
+                      <Icon name="check" size={17} />
+                      <span>{javaInstallSuccess}</span>
+                    </div>
+                  )}
+
+                  <div className="java-downloader-controls">
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      disabled={installingJava}
+                      onClick={() => void handleInstallJava(requiredJava ?? selectedDownloadMajor)}
+                    >
+                      {installingJava ? (
+                        <>
+                          <span className="button-loader" /> Downloading & Installing OpenJDK {requiredJava ?? selectedDownloadMajor}…
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="download" size={16} /> Download & Install Java {requiredJava ?? selectedDownloadMajor}
+                        </>
+                      )}
+                    </button>
+
+                    <div className="java-version-select-wrap">
+                      <span>Other version:</span>
+                      <select
+                        className="java-version-dropdown"
+                        value={selectedDownloadMajor}
+                        onChange={(e) => setSelectedDownloadMajor(Number(e.target.value))}
+                        disabled={installingJava}
+                      >
+                        {downloadableMajors.map((v) => (
+                          <option key={v} value={v}>
+                            Java {v} {v === requiredJava ? '(Required)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedDownloadMajor !== requiredJava && (
+                        <button
+                          type="button"
+                          className="button button-secondary button-sm"
+                          disabled={installingJava}
+                          onClick={() => void handleInstallJava(selectedDownloadMajor)}
+                        >
+                          Install Java {selectedDownloadMajor}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -317,6 +439,58 @@ export function CreateServerPage() {
                 <div><dt>Memory</dt><dd>{normalizedMemory ? `${normalizedMemory} MB` : 'NodePilot default'}</dd></div>
                 <div><dt>Java</dt><dd>{isBedrock ? 'None (Native C++ Binary)' : requiredJava ? `Java ${requiredJava}+` : 'Validated on create'}</dd></div>
               </dl>
+
+              {!isBedrock && !javaReady && (
+                <div className="java-downloader-card" style={{ marginBottom: '16px' }}>
+                  <div className="java-downloader-header">
+                    <div className="java-downloader-badge">
+                      <Icon name="download" size={20} />
+                    </div>
+                    <div className="java-downloader-info">
+                      <h4>Java {requiredJava ?? 21} is required before creating this server</h4>
+                      <p>
+                        NodePilot can automatically install Eclipse Adoptium OpenJDK {requiredJava ?? 21} so you can launch this server.
+                      </p>
+                    </div>
+                  </div>
+
+                  {javaInstallError && (
+                    <div className="inline-alert alert-error" role="alert" style={{ marginTop: '10px' }}>
+                      <Icon name="warning" size={17} />
+                      <div>
+                        <strong>Installation failed.</strong>
+                        <span>{javaInstallError}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {javaInstallSuccess && (
+                    <div className="inline-alert alert-success" style={{ marginTop: '10px' }}>
+                      <Icon name="check" size={17} />
+                      <span>{javaInstallSuccess}</span>
+                    </div>
+                  )}
+
+                  <div className="java-downloader-controls" style={{ marginTop: '12px' }}>
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      disabled={installingJava}
+                      onClick={() => void handleInstallJava(requiredJava ?? 21)}
+                    >
+                      {installingJava ? (
+                        <>
+                          <span className="button-loader" /> Installing OpenJDK {requiredJava ?? 21}…
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="download" size={16} /> Download & Install Java {requiredJava ?? 21} (Adoptium)
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
               <label className={`eula-agreement ${eulaAccepted ? 'is-accepted' : ''}`}>
                 <input type="checkbox" checked={eulaAccepted} onChange={(event) => setEulaAccepted(event.target.checked)} />
                 <span className="checkbox-mark"><Icon name="check" size={15} /></span>

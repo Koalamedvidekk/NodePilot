@@ -5,6 +5,8 @@ import type {
   FileContent,
   FileEntry,
   JavaDiscovery,
+  JavaInstallation,
+  DownloadableJavaInfo,
   MinecraftRequirements,
   MinecraftVersion,
   Server,
@@ -265,6 +267,23 @@ export const api = {
       }).filter((installation) => Boolean(installation.path)),
       message: typeof raw.message === 'string' ? raw.message : undefined,
     };
+  },
+
+  async downloadableJava(): Promise<DownloadableJavaInfo> {
+    const payload = unwrap(await request<unknown>('/java/downloadable'));
+    const raw = object(payload);
+    return {
+      versions: Array.isArray(raw.versions) ? raw.versions.filter((v): v is number => typeof v === 'number') : [8, 11, 16, 17, 21, 25],
+      installedMajors: Array.isArray(raw.installedMajors) ? raw.installedMajors.filter((v): v is number => typeof v === 'number') : [],
+    };
+  },
+
+  async installJava(major: number): Promise<{ ok: boolean; installation: JavaInstallation }> {
+    const payload = unwrap(await request<{ ok: boolean; installation: JavaInstallation }>('/java/install', {
+      method: 'POST',
+      body: JSON.stringify({ major }),
+    }));
+    return payload;
   },
 
   async minecraftRequirements(software: ServerSoftware | string, version: string): Promise<MinecraftRequirements> {

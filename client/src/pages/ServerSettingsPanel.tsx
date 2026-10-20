@@ -48,6 +48,10 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
   const [minMemory, setMinMemory] = useState('');
   const [maxMemory, setMaxMemory] = useState('');
   const [customJvmArgsText, setCustomJvmArgsText] = useState('');
+  const [downloadingJdk, setDownloadingJdk] = useState(false);
+  const [jdkDownloadMajor, setJdkDownloadMajor] = useState(21);
+  const [downloadableJdkList, setDownloadableJdkList] = useState<number[]>([8, 11, 16, 17, 21, 25]);
+  const [jdkDownloadStatus, setJdkDownloadStatus] = useState<string | null>(null);
 
   // 4. Startup & Shutdown
   const [autoStart, setAutoStart] = useState<'always' | 'disabled'>('disabled');
@@ -95,6 +99,30 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    void api.downloadableJava()
+      .then((res) => {
+        if (res.versions && res.versions.length > 0) setDownloadableJdkList(res.versions);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const handleDownloadJdk = async () => {
+    setDownloadingJdk(true);
+    setJdkDownloadStatus(null);
+    setError(null);
+    try {
+      const res = await api.installJava(jdkDownloadMajor);
+      setJdkDownloadStatus(`Successfully installed OpenJDK ${res.installation.major} (${res.installation.version})!`);
+      await loadSettings();
+      onServerUpdated?.();
+    } catch (err) {
+      setError(`Failed to download OpenJDK ${jdkDownloadMajor}: ${errorMessage(err)}`);
+    } finally {
+      setDownloadingJdk(false);
+    }
+  };
 
   // Periodic polling for live countdown and status when server is running
   useEffect(() => {
@@ -891,6 +919,41 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                         </strong>
                       </div>
                     </div>
+
+                    <div className="java-downloader-inline" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Icon name="download" size={15} /> Download OpenJDK:
+                      </span>
+                      <select
+                        className="java-version-dropdown"
+                        value={jdkDownloadMajor}
+                        onChange={(e) => setJdkDownloadMajor(Number(e.target.value))}
+                        disabled={downloadingJdk}
+                      >
+                        {downloadableJdkList.map((v) => (
+                          <option key={v} value={v}>Java {v} (Adoptium Temurin)</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="button button-secondary button-sm"
+                        disabled={downloadingJdk}
+                        onClick={() => void handleDownloadJdk()}
+                      >
+                        {downloadingJdk ? (
+                          <><span className="button-loader" /> Installing Java {jdkDownloadMajor}…</>
+                        ) : (
+                          `Install Java ${jdkDownloadMajor}`
+                        )}
+                      </button>
+                    </div>
+
+                    {jdkDownloadStatus && (
+                      <div className="inline-alert alert-success" style={{ marginTop: '8px' }}>
+                        <Icon name="check" size={15} />
+                        <span>{jdkDownloadStatus}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Action Buttons */}
