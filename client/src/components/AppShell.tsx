@@ -4,6 +4,7 @@ import { api } from '../api';
 import { Icon, type IconName } from './Icon';
 import { NetworkModal } from './NetworkModal';
 import { PinModal } from './PinModal';
+import { UpdateNotification } from './UpdateNotification';
 import type { AuthStatus, NetworkInfo } from '../types';
 
 interface NavigationItem {
@@ -91,6 +92,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           onRefresh={() => void loadNetworkAndAuth()}
         />
       )}
+
+      {auth && (!auth.hasPin || auth.authenticated) && <UpdateNotification />}
 
       <aside className={`sidebar ${sidebarOpen ? 'is-open' : ''}`} aria-label="Primary navigation">
         <div className="brand-row">

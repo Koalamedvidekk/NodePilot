@@ -13,6 +13,7 @@ import {
   selectReleaseAssets,
   type UpdateAssetCandidate,
 } from '../services/update-service.js';
+import type { UpdateReleaseInfo, UpdateStatusState } from '../types.js';
 
 const hash = 'a'.repeat(64);
 const archiveName = 'nodepilot-v1.2.3-universal.zip';
@@ -129,4 +130,52 @@ test('overlapping update checks share one in-flight GitHub request', async () =>
   assert.equal(fetchCalls, 1);
   assert.equal(firstStatus.status, 'idle');
   assert.equal(secondStatus.status, 'idle');
+});
+
+test('snoozing an update persists a 24-hour reminder for that exact release only', () => {
+  const settings = {
+    systemStartupEnabled: false,
+    launchMode: 'headless' as const,
+    openBrowserOnStartup: false,
+    continueRunningOnClose: true,
+    updateIncludePrereleases: false,
+    updateDismissedVersion: null as string | null,
+    updateSnoozedVersion: null as string | null,
+    updateSnoozedUntil: null as string | null,
+    updateLastCheckedAt: null as string | null,
+  };
+  const hostSettings = {
+    getSettings: () => ({ ...settings }),
+    saveSettings: (input: Partial<typeof settings>) => Object.assign(settings, input),
+  };
+  const service = new UpdateService(
+    path.join(os.tmpdir(), 'nodepilot-update-snooze-test-data'),
+    path.join(os.tmpdir(), 'nodepilot-update-snooze-test-app'),
+    hostSettings as never,
+    { list: () => [] } as never,
+  );
+  const state = (service as unknown as { statusState: UpdateStatusState }).statusState;
+  const release: UpdateReleaseInfo = {
+    version: '1.2.3',
+    rawTag: 'v1.2.3',
+    name: 'NodePilot v1.2.3',
+    publishedAt: '2026-10-23T00:00:00.000Z',
+    isPrerelease: false,
+    htmlUrl: 'https://github.com/Koalamedvidekk/NodePilot/releases/tag/v1.2.3',
+    body: '',
+    changelog: { features: [], improvements: [], bugFixes: [], rawNotes: '' },
+  };
+  state.availableRelease = release;
+  state.isUpdateAvailable = true;
+
+  const startedAt = Date.now();
+  service.snoozeAvailableRelease();
+  const status = service.getStatus();
+
+  assert.equal(status.snoozedVersion, '1.2.3');
+  assert.equal(settings.updateSnoozedVersion, '1.2.3');
+  assert.ok(status.snoozedUntil);
+  const snoozedUntil = Date.parse(status.snoozedUntil ?? '');
+  assert.ok(snoozedUntil >= startedAt + (23 * 60 * 60 * 1_000));
+  assert.ok(snoozedUntil <= startedAt + (25 * 60 * 60 * 1_000));
 });

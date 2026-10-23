@@ -720,6 +720,11 @@ export const api = {
     return object(payload).update as UpdateStatusState;
   },
 
+  async snoozeAvailableUpdate(): Promise<UpdateStatusState> {
+    const payload = unwrap(await request<unknown>('/host/updates/snooze', { method: 'POST' }));
+    return object(payload).update as UpdateStatusState;
+  },
+
   async installUpdate(): Promise<{ ok: boolean; status: string; message: string; update: UpdateStatusState }> {
     return unwrap(
       await request<{ ok: boolean; status: string; message: string; update: UpdateStatusState }>('/host/updates/install', {

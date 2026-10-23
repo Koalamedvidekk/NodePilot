@@ -396,6 +396,10 @@ export interface HostSettings {
   continueRunningOnClose: boolean;
   updateIncludePrereleases?: boolean;
   updateDismissedVersion?: string | null;
+  /** Version whose update reminder was postponed from the web UI. */
+  updateSnoozedVersion?: string | null;
+  /** ISO timestamp after which a postponed update reminder may be shown again. */
+  updateSnoozedUntil?: string | null;
   updateLastCheckedAt?: string | null;
 }
 
@@ -586,6 +590,8 @@ export interface UpdateStatusState {
   canAutoInstall: boolean;
   unattendedSupported: boolean;
   dismissedVersion: string | null;
+  snoozedVersion: string | null;
+  snoozedUntil: string | null;
   /** Human-readable reason when the verified self-updater cannot be used. */
   autoInstallReason: string | null;
 }

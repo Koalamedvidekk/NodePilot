@@ -968,6 +968,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { update: updates.getStatus(), settings: hostSettings.getSettings() };
   });
 
+  app.post('/api/host/updates/snooze', async () => {
+    updates.snoozeAvailableRelease();
+    return { update: updates.getStatus(), settings: hostSettings.getSettings() };
+  });
+
   app.post('/api/host/updates/install', async (_request, reply) => {
     if (!options.isPrimaryInstance || !options.instanceLock) {
       throw new AppError(409, 'update_not_primary_instance', 'Only the primary NodePilot instance may apply an update.');

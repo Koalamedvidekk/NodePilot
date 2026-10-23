@@ -25,16 +25,22 @@ test('HostSettingsRepository correctly saves, retrieves, and updates host config
     assert.equal(initial.launchMode, 'headless');
     assert.equal(initial.openBrowserOnStartup, false);
     assert.equal(initial.continueRunningOnClose, true);
+    assert.equal(initial.updateSnoozedVersion, null);
+    assert.equal(initial.updateSnoozedUntil, null);
 
     const updated = repo.saveSettings({
       systemStartupEnabled: true,
       launchMode: 'windowed',
       openBrowserOnStartup: true,
+      updateSnoozedVersion: '0.2.0',
+      updateSnoozedUntil: '2030-01-02T03:04:05.000Z',
     });
 
     assert.equal(updated.systemStartupEnabled, true);
     assert.equal(updated.launchMode, 'windowed');
     assert.equal(updated.openBrowserOnStartup, true);
+    assert.equal(updated.updateSnoozedVersion, '0.2.0');
+    assert.equal(updated.updateSnoozedUntil, '2030-01-02T03:04:05.000Z');
 
     // Verify persistence across new repository instance
     const repo2 = new HostSettingsRepository(db);
@@ -42,6 +48,8 @@ test('HostSettingsRepository correctly saves, retrieves, and updates host config
     assert.equal(reloaded.systemStartupEnabled, true);
     assert.equal(reloaded.launchMode, 'windowed');
     assert.equal(reloaded.openBrowserOnStartup, true);
+    assert.equal(reloaded.updateSnoozedVersion, '0.2.0');
+    assert.equal(reloaded.updateSnoozedUntil, '2030-01-02T03:04:05.000Z');
 
     db.close();
   } finally {

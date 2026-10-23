@@ -8,6 +8,8 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   continueRunningOnClose: true,
   updateIncludePrereleases: false,
   updateDismissedVersion: null,
+  updateSnoozedVersion: null,
+  updateSnoozedUntil: null,
   updateLastCheckedAt: null,
 };
 
@@ -34,6 +36,8 @@ export class HostSettingsRepository {
         : true,
       updateIncludePrereleases: map.get('update_include_prereleases') === 'true',
       updateDismissedVersion: map.get('update_dismissed_version') || null,
+      updateSnoozedVersion: map.get('update_snoozed_version') || null,
+      updateSnoozedUntil: map.get('update_snoozed_until') || null,
       updateLastCheckedAt: map.get('update_last_checked_at') || null,
     };
   }
@@ -63,6 +67,12 @@ export class HostSettingsRepository {
       }
       if (settings.updateDismissedVersion !== undefined) {
         insertOrReplace.run('update_dismissed_version', settings.updateDismissedVersion ?? '', now);
+      }
+      if (settings.updateSnoozedVersion !== undefined) {
+        insertOrReplace.run('update_snoozed_version', settings.updateSnoozedVersion ?? '', now);
+      }
+      if (settings.updateSnoozedUntil !== undefined) {
+        insertOrReplace.run('update_snoozed_until', settings.updateSnoozedUntil ?? '', now);
       }
       if (settings.updateLastCheckedAt !== undefined) {
         insertOrReplace.run('update_last_checked_at', settings.updateLastCheckedAt ?? '', now);

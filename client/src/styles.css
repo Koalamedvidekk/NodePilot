@@ -3196,4 +3196,72 @@ select option:hover {
   border: 1px solid rgba(255, 111, 142, .25);
 }
 
+/* Application update prompt */
+.update-notification-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(3, 6, 13, .68);
+  backdrop-filter: blur(8px);
+}
+
+.update-notification {
+  width: min(100%, 525px);
+  padding: 25px;
+  border: 1px solid rgba(143, 124, 255, .36);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(31, 37, 69, .99), rgba(13, 18, 32, .99));
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .54), 0 0 0 1px rgba(93, 216, 255, .05) inset;
+}
+
+.update-notification-header { display: flex; align-items: center; gap: 14px; }
+.update-notification-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(152, 133, 255, .35);
+  border-radius: 13px;
+  color: #e3ddff;
+  background: linear-gradient(135deg, rgba(128, 104, 248, .35), rgba(83, 216, 255, .16));
+}
+.update-notification h2 { margin: 3px 0 0; font-size: 21px; letter-spacing: -.035em; }
+.update-notification-copy { margin: 20px 0 16px; color: #bcc7de; font-size: 13px; line-height: 1.6; }
+.update-notification-release {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .035);
+}
+.update-notification-release strong, .update-notification-release span { display: block; }
+.update-notification-release strong { font-size: 13px; }
+.update-notification-release span { margin-top: 3px; color: var(--muted-2); font-size: 11px; }
+.update-notification-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 15px;
+  color: #c8dcff;
+  font-size: 12px;
+}
+.update-notification-error { margin: 15px 0 0; }
+.update-notification-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 21px; }
+.update-notification-later { margin: 12px 0 0; color: var(--muted-2); font-size: 11px; text-align: right; }
+
+@media (max-width: 500px) {
+  .update-notification-backdrop { align-items: end; padding: 12px; }
+  .update-notification { padding: 20px; border-radius: 15px; }
+  .update-notification-release { align-items: flex-start; }
+  .update-notification-actions { flex-direction: column-reverse; }
+  .update-notification-actions .button { width: 100%; }
+  .update-notification-later { text-align: center; }
+}
+
 

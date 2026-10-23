@@ -31,6 +31,7 @@ const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 25_000;
 const MAX_COMPRESSION_RATIO = 100;
 const MIN_FREE_DISK_BYTES = 1_024 * 1_024 * 1_024;
+const UPDATE_REMINDER_SNOOZE_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_REPOSITORY = 'Koalamedvidekk/NodePilot';
 const GITHUB_API_ORIGIN = 'https://api.github.com';
 const TRUSTED_GITHUB_ASSET_HOSTS = new Set([
@@ -265,6 +266,8 @@ export class UpdateService {
       canAutoInstall: false,
       unattendedSupported: isSupportedPlatform(),
       dismissedVersion: settings.updateDismissedVersion ?? null,
+      snoozedVersion: settings.updateSnoozedVersion ?? null,
+      snoozedUntil: settings.updateSnoozedUntil ?? null,
       autoInstallReason: null,
     };
     this.updateAutoInstallAvailability();
@@ -292,6 +295,8 @@ export class UpdateService {
     const settings = this.hostSettings.getSettings();
     this.statusState.includePrereleases = Boolean(settings.updateIncludePrereleases);
     this.statusState.dismissedVersion = settings.updateDismissedVersion ?? null;
+    this.statusState.snoozedVersion = settings.updateSnoozedVersion ?? null;
+    this.statusState.snoozedUntil = settings.updateSnoozedUntil ?? null;
     this.updateAutoInstallAvailability();
     return { ...this.statusState };
   }
@@ -305,17 +310,51 @@ export class UpdateService {
     if (!release || !this.statusState.isUpdateAvailable) {
       throw new AppError(409, 'no_update_to_dismiss', 'There is no available update to dismiss.');
     }
-    this.hostSettings.saveSettings({ updateDismissedVersion: release.version });
+    this.hostSettings.saveSettings({
+      updateDismissedVersion: release.version,
+      updateSnoozedVersion: null,
+      updateSnoozedUntil: null,
+    });
     this.statusState.dismissedVersion = release.version;
+    this.statusState.snoozedVersion = null;
+    this.statusState.snoozedUntil = null;
     this.statusState.isUpdateAvailable = false;
     this.statusState.statusMessage = `Update v${release.version} was dismissed.`;
     this.updateAutoInstallAvailability();
   }
 
+  /**
+   * Keeps an available release visible in Host Settings while silencing only the
+   * automatic browser reminder for one day. The version is persisted so a newer
+   * release is never hidden behind an old reminder choice.
+   */
+  snoozeAvailableRelease(): void {
+    const release = this.statusState.availableRelease;
+    if (!release || !this.statusState.isUpdateAvailable) {
+      throw new AppError(409, 'no_update_to_snooze', 'There is no available update to postpone.');
+    }
+
+    const until = new Date(Date.now() + UPDATE_REMINDER_SNOOZE_MS).toISOString();
+    this.hostSettings.saveSettings({
+      updateSnoozedVersion: release.version,
+      updateSnoozedUntil: until,
+    });
+    this.statusState.snoozedVersion = release.version;
+    this.statusState.snoozedUntil = until;
+    this.statusState.statusMessage = `Update v${release.version} reminder postponed for 24 hours.`;
+  }
+
   setIncludePrereleases(include: boolean): void {
-    this.hostSettings.saveSettings({ updateIncludePrereleases: include, updateDismissedVersion: null });
+    this.hostSettings.saveSettings({
+      updateIncludePrereleases: include,
+      updateDismissedVersion: null,
+      updateSnoozedVersion: null,
+      updateSnoozedUntil: null,
+    });
     this.statusState.includePrereleases = include;
     this.statusState.dismissedVersion = null;
+    this.statusState.snoozedVersion = null;
+    this.statusState.snoozedUntil = null;
     this.lastCheckTime = 0;
   }
 
