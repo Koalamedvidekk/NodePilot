@@ -137,19 +137,6 @@ must never overwrite local source changes. Update a clone with:
     npm ci
     npm run build
 
-### Publishing a release
-
-The repository workflow publishes an updater-compatible GitHub Release only after
-the type checks, tests, and production build succeed. To release a new version,
-set the root package version, merge the change, then push a matching tag:
-
-    git tag v0.1.1
-    git push origin v0.1.1
-
-The workflow generates the universal ZIP plus its SHA-256 companion file. Artifact
-signing is not configured by this repository; do not describe a release as signed
-unless a maintainer separately configures and verifies a signing key.
-
 ## Configuration and data
 
 When running for the first time, NodePilot offers an interactive setup wizard in your terminal to choose whether you want to run locally on your PC or make NodePilot accessible to other devices on your local Wi-Fi / LAN network. You can run or re-run this anytime with:
