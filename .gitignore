@@ -12,5 +12,9 @@ data/
 *.log
 *.tsbuildinfo
 coverage/
+release-work/
+nodepilot-v*-universal.zip
+nodepilot-v*-universal.zip.sha256
+nodepilot-release.json
 .DS_Store
 Thumbs.db

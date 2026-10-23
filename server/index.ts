@@ -41,6 +41,7 @@ import { AutoStartService } from './services/auto-start-service.js';
 import { ServerTunnelService } from './services/server-tunnel-service.js';
 import { AutoSleepService } from './services/auto-sleep-service.js';
 import { WakeProxyService } from './services/wake-proxy-service.js';
+import { UpdateService } from './services/update-service.js';
 import { parseMemoryMb, validateCustomJvmArgs } from './lib/settings-helpers.js';
 import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, JavaInstallation, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
 
@@ -111,6 +112,9 @@ const hostSettingsUpdateSchema = z.object({
 const hostStartupEnableSchema = z.object({
   launchMode: z.enum(['headless', 'windowed']).optional(),
   openBrowserOnStartup: z.boolean().optional(),
+});
+const updatePreferencesSchema = z.object({
+  includePrereleases: z.boolean(),
 });
 const serverAutoStartSchema = z.object({
   autoStart: z.enum(['always', 'disabled']),
@@ -324,7 +328,12 @@ async function clientBuildExists(): Promise<boolean> {
   }
 }
 
-export async function buildApp(): Promise<FastifyInstance> {
+interface BuildAppOptions {
+  instanceLock?: InstanceLock;
+  isPrimaryInstance?: boolean;
+}
+
+export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   await ensureDirectory(config.serversDirectory);
   await ensureDirectory(config.importsDirectory);
   await ensureDirectory(config.backupsDirectory);
@@ -332,6 +341,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   const repository = new ServerRepository(database);
   repository.markInterruptedProcessesOffline();
   const hostSettings = new HostSettingsRepository(database);
+  const updates = new UpdateService(config.dataDirectory, config.projectDirectory, hostSettings, repository);
+  updates.start();
   const startup = new StartupService(hostSettings, path.resolve('.'));
   const playit = new PlayitService(config.dataDirectory);
   const serverTunnelRepo = new ServerTunnelRepository(database);
@@ -649,6 +660,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   async function runLifecycle(request: FastifyRequest, action: 'start' | 'stop' | 'restart') {
     const { id } = serverParamsSchema.parse(request.params);
+    if (updates.isRestartScheduled() && action !== 'stop') {
+      throw new AppError(409, 'update_restarting', 'NodePilot is applying an update. Wait for it to restart before starting a server.');
+    }
     let server = requireServer(repository, id);
     if (action === 'stop') return { server: await serializeServerWithDiskCheck(await runtime.stop(server), config.serversDirectory) };
     const directoryExists = await managedServerDirectoryExists(config.serversDirectory, server.directory);
@@ -935,6 +949,50 @@ export async function buildApp(): Promise<FastifyInstance> {
       settings: updated,
       startup: await startup.getStatus(),
     };
+  });
+
+  app.get('/api/host/updates', async () => ({ update: updates.getStatus() }));
+
+  app.post('/api/host/updates/check', async () => ({
+    update: await updates.checkForUpdates(true),
+  }));
+
+  app.put('/api/host/updates/preferences', async (request) => {
+    const { includePrereleases } = updatePreferencesSchema.parse(request.body);
+    updates.setIncludePrereleases(includePrereleases);
+    return { update: await updates.checkForUpdates(true), settings: hostSettings.getSettings() };
+  });
+
+  app.post('/api/host/updates/dismiss', async () => {
+    updates.dismissAvailableRelease();
+    return { update: updates.getStatus(), settings: hostSettings.getSettings() };
+  });
+
+  app.post('/api/host/updates/install', async (_request, reply) => {
+    if (!options.isPrimaryInstance || !options.instanceLock) {
+      throw new AppError(409, 'update_not_primary_instance', 'Only the primary NodePilot instance may apply an update.');
+    }
+
+    const prepared = await updates.prepareUpdate();
+    // Respond before closing the listener. The detached helper waits for this process
+    // to exit and never force-kills it, avoiding PID reuse or partial game shutdown.
+    reply.raw.once('finish', () => {
+      const restart = setTimeout(() => {
+        void (async () => {
+          try {
+            updates.launchPreparedUpdate();
+            await app.close();
+            options.instanceLock?.release();
+            process.exit(0);
+          } catch (error) {
+            updates.markRestartFailed(error);
+            app.log.error({ err: error }, 'Unable to hand off to the NodePilot update helper');
+          }
+        })();
+      }, 150);
+      restart.unref();
+    });
+    return reply.code(202).send({ ...prepared, update: updates.getStatus() });
   });
 
   app.post('/api/host/startup/enable', async (request) => {
@@ -1378,6 +1436,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.decorate('autoStart', autoStart);
   app.addHook('onClose', async () => {
+    updates.stop();
     autoSleep.stop();
     wakeProxy.stop();
     bridge.shutdown();
@@ -1400,7 +1459,7 @@ if (!lockAcquired) {
   console.warn('   If you are starting NodePilot again, check your existing process or system startup service.\n');
 }
 
-const app = await buildApp();
+const app = await buildApp({ instanceLock, isPrimaryInstance: lockAcquired });
 try {
   currentListeningHost = config.host;
   await app.listen({ host: config.host, port: config.port });

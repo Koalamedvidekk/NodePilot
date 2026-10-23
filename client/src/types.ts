@@ -394,6 +394,9 @@ export interface HostSettings {
   launchMode: 'headless' | 'windowed';
   openBrowserOnStartup: boolean;
   continueRunningOnClose: boolean;
+  updateIncludePrereleases?: boolean;
+  updateDismissedVersion?: string | null;
+  updateLastCheckedAt?: string | null;
 }
 
 export interface HostStartupStatus {
@@ -526,4 +529,64 @@ export interface UpdateServerSettingsInput {
 }
 
 export type ResetServerSettingsSection = 'auto-wake' | 'auto-sleep' | 'java' | 'startup';
+
+export type UpdateInstallStatus =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'extracting'
+  | 'backing_up'
+  | 'installing'
+  | 'ready_to_restart'
+  | 'restarting'
+  | 'completed'
+  | 'error';
+
+export interface ReleaseAssetInfo {
+  name: string;
+  downloadUrl: string;
+  size: number;
+  contentType: string;
+}
+
+export interface ParsedChangelog {
+  features: string[];
+  improvements: string[];
+  bugFixes: string[];
+  rawNotes: string;
+}
+
+export interface UpdateReleaseInfo {
+  version: string;
+  rawTag: string;
+  name: string;
+  publishedAt: string;
+  isPrerelease: boolean;
+  htmlUrl: string;
+  body: string;
+  changelog: ParsedChangelog;
+  asset?: ReleaseAssetInfo;
+  checksumAsset?: ReleaseAssetInfo;
+}
+
+export interface UpdateStatusState {
+  currentVersion: string;
+  isUpdateAvailable: boolean;
+  availableRelease: UpdateReleaseInfo | null;
+  lastCheckedAt: string | null;
+  checkError: string | null;
+  status: UpdateInstallStatus;
+  progressPercent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  statusMessage: string | null;
+  error: string | null;
+  includePrereleases: boolean;
+  canAutoInstall: boolean;
+  unattendedSupported: boolean;
+  dismissedVersion: string | null;
+  /** Human-readable reason when the verified self-updater cannot be used. */
+  autoInstallReason: string | null;
+}
 

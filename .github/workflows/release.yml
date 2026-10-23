@@ -1,0 +1,74 @@
+name: Publish NodePilot release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Test, package, and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate the tag version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "$tag_version" = "$package_version"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Create the verified updater package
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package_name="nodepilot-v${version}-universal.zip"
+          stage="release-work/nodepilot-v${version}-universal"
+
+          mkdir -p "$stage"
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$stage"
+          node scripts/create-release-manifest.mjs "$stage" "$version"
+          (
+            cd release-work
+            zip -qr "../$package_name" "$(basename "$stage")"
+          )
+          sha256sum "$package_name" | awk '{print $1 "  " $2}' > "$package_name.sha256"
+
+          echo "archive=$package_name" >> "$GITHUB_OUTPUT"
+          echo "checksum=$package_name.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.package.outputs.archive }}" \
+            "${{ steps.package.outputs.checksum }}" \
+            --title "NodePilot $GITHUB_REF_NAME" \
+            --generate-notes

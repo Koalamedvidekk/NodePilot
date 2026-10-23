@@ -40,6 +40,7 @@ import type {
   ServerSettingsDetails,
   UpdateServerSettingsInput,
   ResetServerSettingsSection,
+  UpdateStatusState,
 } from './types';
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
@@ -690,6 +691,39 @@ export const api = {
       }>('/host/settings', {
         method: 'PUT',
         body: JSON.stringify(settings),
+      }),
+    );
+  },
+
+  async getUpdateStatus(): Promise<UpdateStatusState> {
+    const payload = unwrap(await request<unknown>('/host/updates'));
+    return object(payload).update as UpdateStatusState;
+  },
+
+  async checkForUpdates(): Promise<UpdateStatusState> {
+    const payload = unwrap(await request<unknown>('/host/updates/check', { method: 'POST' }));
+    return object(payload).update as UpdateStatusState;
+  },
+
+  async setUpdatePreferences(includePrereleases: boolean): Promise<UpdateStatusState> {
+    const payload = unwrap(
+      await request<unknown>('/host/updates/preferences', {
+        method: 'PUT',
+        body: JSON.stringify({ includePrereleases }),
+      }),
+    );
+    return object(payload).update as UpdateStatusState;
+  },
+
+  async dismissAvailableUpdate(): Promise<UpdateStatusState> {
+    const payload = unwrap(await request<unknown>('/host/updates/dismiss', { method: 'POST' }));
+    return object(payload).update as UpdateStatusState;
+  },
+
+  async installUpdate(): Promise<{ ok: boolean; status: string; message: string; update: UpdateStatusState }> {
+    return unwrap(
+      await request<{ ok: boolean; status: string; message: string; update: UpdateStatusState }>('/host/updates/install', {
+        method: 'POST',
       }),
     );
   },

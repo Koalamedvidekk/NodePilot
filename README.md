@@ -112,6 +112,44 @@ URL (usually `http://127.0.0.1:5173`). Vite proxies `/api` and WebSocket traffic
 to the local backend. For a production-like single-server run, use `npm run build`
 then `npm start`.
 
+## Updating NodePilot
+
+Open **Host Settings → NodePilot Updates** to see the installed version, check
+GitHub Releases, choose whether preview releases are included, and review release
+notes. For a packaged NodePilot installation, **Install & Restart** only appears
+when all of these conditions are met:
+
+- The release contains the expected versioned universal ZIP package and its
+  matching SHA-256 file.
+- The downloaded archive matches that published SHA-256 value.
+- The archive has no unsafe paths, links, duplicate paths, or unlisted files.
+- No NodePilot-managed game server is running.
+
+The updater stages and builds the release before restarting, keeps the NodePilot
+data directory (worlds, database, and backups) and the environment file untouched,
+and records its result in the updates log inside the data directory. It does not
+force-kill NodePilot if graceful shutdown takes too long.
+
+Git checkouts intentionally do **not** auto-install releases, because an updater
+must never overwrite local source changes. Update a clone with:
+
+    git pull --ff-only
+    npm ci
+    npm run build
+
+### Publishing a release
+
+The repository workflow publishes an updater-compatible GitHub Release only after
+the type checks, tests, and production build succeed. To release a new version,
+set the root package version, merge the change, then push a matching tag:
+
+    git tag v0.1.1
+    git push origin v0.1.1
+
+The workflow generates the universal ZIP plus its SHA-256 companion file. Artifact
+signing is not configured by this repository; do not describe a release as signed
+unless a maintainer separately configures and verifies a signing key.
+
 ## Configuration and data
 
 When running for the first time, NodePilot offers an interactive setup wizard in your terminal to choose whether you want to run locally on your PC or make NodePilot accessible to other devices on your local Wi-Fi / LAN network. You can run or re-run this anytime with:
@@ -277,6 +315,12 @@ without remapping existing configuration.
 - Java is launched using argument arrays, never by concatenating user text into a shell command.
 - Publisher downloads are restricted to fixed HTTPS hosts, size limited, redirect-checked, and
   verified against publisher checksums whenever the upstream provides one.
+- Self-updates use a fixed GitHub Release asset name, require a matching SHA-256
+  checksum, manually restrict redirects to GitHub-owned HTTPS hosts, and inspect
+  the ZIP before any application files are changed.
+- The detached updater never kills its parent PID; it waits for a graceful close,
+  preserves local data and environment files, and rolls back application files if
+  dependency installation or the build fails.
 - Usage metrics are collected only for child processes NodePilot started in this session; an old
   process ID is never rediscovered after a restart.
 - File editing is limited to supported text files and size-capped; binary JARs and

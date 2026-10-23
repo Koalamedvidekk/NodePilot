@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
-import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server } from '../types';
+import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, UpdateStatusState } from '../types';
 
 export function HostSettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -15,22 +15,26 @@ export function HostSettingsPage() {
   const [playit, setPlayit] = useState<PlayitStatus | null>(null);
   const [servers, setServers] = useState<Server[]>([]);
   const [diagnostics, setDiagnostics] = useState<HostDiagnostics | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusState | null>(null);
 
   const [togglingServer, setTogglingServer] = useState<string | null>(null);
   const [togglingPlayit, setTogglingPlayit] = useState(false);
+  const [updatingNodePilot, setUpdatingNodePilot] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [hostData, serverList, diag] = await Promise.all([
+      const [hostData, serverList, diag, updates] = await Promise.all([
         api.getHostSettings(),
         api.servers(),
         api.getHostDiagnostics().catch(() => null),
+        api.getUpdateStatus().catch(() => null),
       ]);
       setSettings(hostData.settings);
       setStartup(hostData.startup);
       setPlayit(hostData.playit);
       setServers(serverList);
       setDiagnostics(diag);
+      setUpdateStatus(updates);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load host configuration.');
@@ -42,6 +46,33 @@ export function HostSettingsPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // A check or download can take long enough that a one-shot API response would
+  // leave the user looking at stale information. Poll the real status only while
+  // an update action is underway; normal page loading remains request-light.
+  useEffect(() => {
+    if (!updatingNodePilot) return undefined;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const next = await api.getUpdateStatus();
+        if (!active) return;
+        setUpdateStatus(next);
+        if (next.status === 'error') {
+          setError(next.checkError ?? next.error ?? next.statusMessage ?? 'NodePilot update failed.');
+          setUpdatingNodePilot(false);
+        }
+      } catch {
+        // A brief request loss is expected while a successful update restarts the app.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 750);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [updatingNodePilot]);
 
   const handleToggleStartup = async () => {
     if (!settings || !startup) return;
@@ -213,6 +244,82 @@ export function HostSettingsPage() {
       setError(err instanceof Error ? err.message : 'Playit operation failed.');
     } finally {
       setTogglingPlayit(false);
+    }
+  };
+
+  const handleCheckForUpdates = async () => {
+    setUpdatingNodePilot(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const next = await api.checkForUpdates();
+      setUpdateStatus(next);
+      const updateError = next.checkError ?? next.error;
+      if (next.status === 'error' || updateError) {
+        setError(updateError ?? 'Unable to check for NodePilot updates.');
+      } else {
+        setSuccessMessage(next.statusMessage ?? 'Update check completed.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to check for NodePilot updates.');
+    } finally {
+      setUpdatingNodePilot(false);
+    }
+  };
+
+  const handlePrereleasePreference = async (includePrereleases: boolean) => {
+    setUpdatingNodePilot(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const next = await api.setUpdatePreferences(includePrereleases);
+      setUpdateStatus(next);
+      setSettings((current) => current ? { ...current, updateIncludePrereleases: includePrereleases } : current);
+      const updateError = next.checkError ?? next.error;
+      if (next.status === 'error' || updateError) {
+        setError(updateError ?? 'Unable to check for NodePilot updates.');
+      } else {
+        setSuccessMessage(includePrereleases ? 'Preview releases are now included in update checks.' : 'Update checks now use stable releases only.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to change update preferences.');
+    } finally {
+      setUpdatingNodePilot(false);
+    }
+  };
+
+  const handleDismissUpdate = async () => {
+    if (!window.confirm('Hide this update until a newer NodePilot release is published?')) return;
+    setUpdatingNodePilot(true);
+    setError(null);
+    try {
+      const next = await api.dismissAvailableUpdate();
+      setUpdateStatus(next);
+      setSuccessMessage('The update was dismissed. You can still check again at any time.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to dismiss the update.');
+    } finally {
+      setUpdatingNodePilot(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    const active = servers.filter((server) => ['running', 'starting', 'stopping'].includes(server.status));
+    if (active.length > 0) {
+      setError('Stop all managed game servers before updating NodePilot.');
+      return;
+    }
+    if (!window.confirm('NodePilot will build the verified release and restart. Continue?')) return;
+
+    setUpdatingNodePilot(true);
+    setError(null);
+    try {
+      const result = await api.installUpdate();
+      setUpdateStatus(result.update);
+      setSuccessMessage(result.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to prepare the NodePilot update.');
+      setUpdatingNodePilot(false);
     }
   };
 
@@ -578,7 +685,198 @@ export function HostSettingsPage() {
           </div>
         </section>
 
-        {/* Section 4: Host Behavior & Diagnostics */}
+        {/* Section 4: Verified NodePilot Updates */}
+        <section className="settings-section-card update-settings-card">
+          <div className="section-card-header">
+            <div className="section-title-wrap">
+              <Icon name="download" size={20} />
+              <div>
+                <h3>NodePilot Updates</h3>
+                <p>Check GitHub Releases and apply only a checksum-verified package.</p>
+              </div>
+            </div>
+            <div className="section-header-action">
+              <span
+                className={[
+                  'status-pill',
+                  ['checking', 'downloading', 'verifying', 'extracting', 'ready_to_restart', 'restarting'].includes(updateStatus?.status ?? '')
+                    ? 'is-warning'
+                    : updateStatus?.status === 'error'
+                      ? 'is-offline'
+                      : updateStatus?.isUpdateAvailable
+                      ? 'is-online'
+                      : 'is-offline',
+                ].join(' ')}
+              >
+                {updateStatus?.status === 'checking'
+                  ? 'Checking'
+                  : !updateStatus
+                    ? 'Not Checked'
+                  : updateStatus?.status === 'downloading'
+                    ? 'Downloading'
+                    : updateStatus?.status === 'verifying' || updateStatus?.status === 'extracting' || updateStatus?.status === 'ready_to_restart'
+                      ? 'Preparing'
+                    : updateStatus?.status === 'restarting'
+                      ? 'Restarting'
+                      : updateStatus?.status === 'error'
+                        ? 'Update Error'
+                      : updateStatus?.isUpdateAvailable
+                        ? 'Update Available'
+                        : 'Up to Date'}
+              </span>
+            </div>
+          </div>
+
+          <div className="section-card-body">
+            <div className="update-version-grid">
+              <div className="update-version-stat">
+                <span>Installed</span>
+                <strong>{'v' + (updateStatus?.currentVersion ?? '…')}</strong>
+              </div>
+              <div className="update-version-stat">
+                <span>Latest release</span>
+                <strong>{updateStatus?.availableRelease ? 'v' + updateStatus.availableRelease.version : 'Not checked yet'}</strong>
+              </div>
+              <div className="update-version-stat">
+                <span>Last checked</span>
+                <strong>
+                  {updateStatus?.lastCheckedAt
+                    ? new Date(updateStatus.lastCheckedAt).toLocaleString()
+                    : 'Never'}
+                </strong>
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <strong>Include Preview Releases</strong>
+                <p>Allow beta and release-candidate versions in update checks. Stable releases remain the default.</p>
+              </div>
+              <div className="setting-action">
+                <label className="switch-label">
+                  <input
+                    type="checkbox"
+                    checked={updateStatus?.includePrereleases ?? settings?.updateIncludePrereleases ?? false}
+                    onChange={(event) => void handlePrereleasePreference(event.target.checked)}
+                    disabled={updatingNodePilot}
+                  />
+                  <span>{(updateStatus?.includePrereleases ?? settings?.updateIncludePrereleases) ? 'Enabled' : 'Stable only'}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="update-actions">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => void handleCheckForUpdates()}
+                disabled={updatingNodePilot || updateStatus?.status === 'restarting'}
+              >
+                <Icon name="refresh" size={16} />
+                <span>{updateStatus?.status === 'checking' ? 'Checking…' : 'Check for Updates'}</span>
+              </button>
+
+              {updateStatus?.isUpdateAvailable && updateStatus.canAutoInstall && (
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => void handleInstallUpdate()}
+                  disabled={updatingNodePilot}
+                >
+                  <Icon name="download" size={16} />
+                  <span>{updatingNodePilot ? 'Preparing Update…' : 'Install & Restart'}</span>
+                </button>
+              )}
+
+              {updateStatus?.isUpdateAvailable && (
+                <button
+                  type="button"
+                  className="button button-ghost"
+                  onClick={() => void handleDismissUpdate()}
+                  disabled={updatingNodePilot}
+                >
+                  Dismiss this version
+                </button>
+              )}
+            </div>
+
+            {updateStatus?.statusMessage && (
+              <p className="update-status-message" aria-live="polite">{updateStatus.statusMessage}</p>
+            )}
+
+            {updateStatus && ['downloading', 'verifying', 'extracting'].includes(updateStatus.status) && (
+              <div className="update-progress" aria-label="Update preparation progress">
+                <div className="update-progress-track">
+                  <span style={{ width: String(Math.max(3, updateStatus.progressPercent)) + '%' }} />
+                </div>
+                <small>
+                  {updateStatus.status === 'downloading' && updateStatus.totalBytes > 0
+                    ? Math.round(updateStatus.downloadedBytes / 1024 / 1024) + ' MB of ' + Math.round(updateStatus.totalBytes / 1024 / 1024) + ' MB'
+                    : String(updateStatus.progressPercent) + '% complete'}
+                </small>
+              </div>
+            )}
+
+            {updateStatus?.isUpdateAvailable && updateStatus.availableRelease && (
+              <div className="update-release-details">
+                <div className="update-release-heading">
+                  <div>
+                    <strong>{updateStatus.availableRelease.name}</strong>
+                    <p>
+                      Published {new Date(updateStatus.availableRelease.publishedAt).toLocaleDateString()}
+                      {updateStatus.availableRelease.isPrerelease ? ' · Preview release' : ''}
+                    </p>
+                  </div>
+                  <a
+                    href={updateStatus.availableRelease.htmlUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="button button-ghost button-small"
+                  >
+                    Release notes
+                    <Icon name="arrowUpRight" size={15} />
+                  </a>
+                </div>
+
+                {updateStatus.availableRelease.changelog.features.length > 0 && (
+                  <div className="update-note-group">
+                    <strong>New</strong>
+                    <ul>{updateStatus.availableRelease.changelog.features.slice(0, 5).map((note) => <li key={note}>{note}</li>)}</ul>
+                  </div>
+                )}
+                {updateStatus.availableRelease.changelog.improvements.length > 0 && (
+                  <div className="update-note-group">
+                    <strong>Improved</strong>
+                    <ul>{updateStatus.availableRelease.changelog.improvements.slice(0, 5).map((note) => <li key={note}>{note}</li>)}</ul>
+                  </div>
+                )}
+                {updateStatus.availableRelease.changelog.bugFixes.length > 0 && (
+                  <div className="update-note-group">
+                    <strong>Fixed</strong>
+                    <ul>{updateStatus.availableRelease.changelog.bugFixes.slice(0, 5).map((note) => <li key={note}>{note}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {updateStatus?.autoInstallReason && (
+              <div className="setting-notice-banner">
+                <Icon name="warning" size={16} />
+                <span>{updateStatus.autoInstallReason}</span>
+              </div>
+            )}
+
+            <div className="setting-detail-box update-safety-note">
+              <strong>Update safety:</strong>
+              <p>
+                NodePilot requires a matching SHA-256 checksum, stages the ZIP without extracting links or unsafe paths,
+                keeps your <code>.nodepilot</code> data and <code>.env</code> untouched, and refuses to restart while a managed server is active.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Section 5: Host Behavior & Diagnostics */}
         <section className="settings-section-card">
           <div className="section-card-header">
             <div className="section-title-wrap">

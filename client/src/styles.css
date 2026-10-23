@@ -1791,6 +1791,141 @@ select option:hover {
   color: var(--muted);
 }
 
+.update-settings-card {
+  border-color: rgba(123, 101, 255, .32);
+}
+
+.update-version-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.update-version-stat {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(174, 195, 255, .1);
+  border-radius: 10px;
+  background: rgba(7, 12, 23, .34);
+}
+
+.update-version-stat span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.update-version-stat strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-status-message {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-progress-track {
+  flex: 1;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(174, 195, 255, .12);
+}
+
+.update-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), #8e78ff);
+  transition: width .2s ease;
+}
+
+.update-progress small {
+  min-width: 96px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.update-release-details {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(123, 101, 255, .25);
+  border-radius: 11px;
+  background: rgba(123, 101, 255, .06);
+}
+
+.update-release-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.update-release-heading strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.update-release-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.update-release-heading .button {
+  flex: 0 0 auto;
+}
+
+.update-note-group {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.update-note-group > strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.update-note-group ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.update-note-group li + li {
+  margin-top: 3px;
+}
+
+.update-safety-note {
+  margin-top: -2px;
+}
+
 .servers-autostart-list {
   display: flex;
   flex-direction: column;
@@ -2217,6 +2352,19 @@ select option:hover {
   .section-card-body {
     padding: 18px;
     gap: 18px;
+  }
+  .update-version-grid {
+    grid-template-columns: 1fr;
+  }
+  .update-release-heading {
+    flex-direction: column;
+  }
+  .update-progress {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .update-progress small {
+    text-align: left;
   }
   .autostart-server-row {
     flex-direction: column;

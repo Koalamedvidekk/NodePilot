@@ -6,6 +6,9 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   launchMode: 'headless',
   openBrowserOnStartup: false,
   continueRunningOnClose: true,
+  updateIncludePrereleases: false,
+  updateDismissedVersion: null,
+  updateLastCheckedAt: null,
 };
 
 export class HostSettingsRepository {
@@ -29,6 +32,9 @@ export class HostSettingsRepository {
       continueRunningOnClose: map.has('continue_running_on_close')
         ? map.get('continue_running_on_close') === 'true'
         : true,
+      updateIncludePrereleases: map.get('update_include_prereleases') === 'true',
+      updateDismissedVersion: map.get('update_dismissed_version') || null,
+      updateLastCheckedAt: map.get('update_last_checked_at') || null,
     };
   }
 
@@ -51,6 +57,15 @@ export class HostSettingsRepository {
       }
       if (settings.continueRunningOnClose !== undefined) {
         insertOrReplace.run('continue_running_on_close', String(settings.continueRunningOnClose), now);
+      }
+      if (settings.updateIncludePrereleases !== undefined) {
+        insertOrReplace.run('update_include_prereleases', String(settings.updateIncludePrereleases), now);
+      }
+      if (settings.updateDismissedVersion !== undefined) {
+        insertOrReplace.run('update_dismissed_version', settings.updateDismissedVersion ?? '', now);
+      }
+      if (settings.updateLastCheckedAt !== undefined) {
+        insertOrReplace.run('update_last_checked_at', settings.updateLastCheckedAt ?? '', now);
       }
     });
 
