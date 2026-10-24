@@ -624,9 +624,33 @@ export function HostSettingsPage() {
                 {!tor?.supported ? (
                   <small className="setting-explanation">Private remote access is currently available on Windows and Linux.</small>
                 ) : !tor?.installed ? (
-                  <small className="setting-explanation">
-                    Install <a href="https://www.torproject.org/download/" target="_blank" rel="noreferrer">Tor Browser or Tor Expert Bundle</a> first, then refresh this page. On Linux, your distribution&apos;s <code>tor</code> package is also supported. NodePilot never downloads Tor automatically.
-                  </small>
+                  <div className="tor-install-help">
+                    <small className="setting-explanation">
+                      Install Tor first, then refresh this page. On Linux, your distribution&apos;s <code>tor</code> package is also supported. NodePilot never downloads or installs Tor automatically.
+                    </small>
+                    <div className="tor-download-actions" aria-label="Official Tor download options">
+                      <a
+                        className="button button-secondary button-small"
+                        href="https://download.torproject.org/tor-browser-for-desktop/"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Icon name="download" size={15} />
+                        <span>Download Tor Browser</span>
+                        <Icon name="arrowUpRight" size={14} />
+                      </a>
+                      <a
+                        className="button button-secondary button-small"
+                        href="https://download.torproject.org/tor/"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Icon name="download" size={15} />
+                        <span>Get Tor Expert Bundle</span>
+                        <Icon name="arrowUpRight" size={14} />
+                      </a>
+                    </div>
+                  </div>
                 ) : (
                   <small className="setting-explanation">Tor {tor.version ?? 'installed'} detected locally. {tor.binaryPath && <code>{tor.binaryPath}</code>}</small>
                 )}

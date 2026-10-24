@@ -92,6 +92,9 @@ svg { display: block; flex: 0 0 auto; }
 .button-ghost { color: var(--muted); background: transparent; }
 .button-ghost:hover { color: var(--text); background: rgba(255,255,255,.04); }
 .button-danger { color: #fff; background: linear-gradient(135deg, #e65775, #c63f60); }
+.tor-install-help { display: grid; gap: 10px; }
+.tor-download-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tor-download-actions .button { text-decoration: none; }
 .button-danger-outline { color: #ffafbd; border-color: rgba(255,111,142,.32); background: rgba(255,111,142,.08); }
 .button-danger-outline:hover { background: rgba(255,111,142,.15); }
 .button-icon { padding-inline: 12px; }
