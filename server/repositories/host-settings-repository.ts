@@ -11,6 +11,7 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   updateSnoozedVersion: null,
   updateSnoozedUntil: null,
   updateLastCheckedAt: null,
+  torEnabled: false,
 };
 
 export class HostSettingsRepository {
@@ -39,6 +40,7 @@ export class HostSettingsRepository {
       updateSnoozedVersion: map.get('update_snoozed_version') || null,
       updateSnoozedUntil: map.get('update_snoozed_until') || null,
       updateLastCheckedAt: map.get('update_last_checked_at') || null,
+      torEnabled: map.get('tor_enabled') === 'true',
     };
   }
 
@@ -76,6 +78,9 @@ export class HostSettingsRepository {
       }
       if (settings.updateLastCheckedAt !== undefined) {
         insertOrReplace.run('update_last_checked_at', settings.updateLastCheckedAt ?? '', now);
+      }
+      if (settings.torEnabled !== undefined) {
+        insertOrReplace.run('tor_enabled', String(settings.torEnabled), now);
       }
     });
 

@@ -34,6 +34,7 @@ import type {
   HostSettings,
   HostStartupStatus,
   PlayitStatus,
+  TorStatus,
   HostDiagnostics,
   ServerTunnel,
   ServerSettings,
@@ -670,12 +671,16 @@ export const api = {
     settings: HostSettings;
     startup: HostStartupStatus;
     playit: PlayitStatus;
+    tor: TorStatus;
+    pinConfigured: boolean;
   }> {
     return unwrap(
       await request<{
         settings: HostSettings;
         startup: HostStartupStatus;
         playit: PlayitStatus;
+        tor: TorStatus;
+        pinConfigured: boolean;
       }>('/host/settings'),
     );
   },
@@ -803,6 +808,27 @@ export const api = {
     return unwrap(
       await request<{ ok: boolean; playit: PlayitStatus }>('/host/playit/reset', {
         method: 'POST',
+      }),
+    );
+  },
+
+  async getTorStatus(): Promise<{ tor: TorStatus; pinConfigured: boolean }> {
+    return unwrap(await request<{ tor: TorStatus; pinConfigured: boolean }>('/host/tor'));
+  },
+
+  async startTor(): Promise<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }> {
+    return unwrap(await request<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }>('/host/tor/start', { method: 'POST' }));
+  },
+
+  async stopTor(): Promise<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }> {
+    return unwrap(await request<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }>('/host/tor/stop', { method: 'POST' }));
+  },
+
+  async resetTorAddress(): Promise<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }> {
+    return unwrap(
+      await request<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }>('/host/tor/reset-address', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
       }),
     );
   },

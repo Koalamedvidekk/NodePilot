@@ -1785,6 +1785,19 @@ select option:hover {
   word-break: break-all;
 }
 
+.tor-address-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.tor-address-row code {
+  flex: 1 1 360px;
+  overflow-wrap: anywhere;
+}
+
 .card-hint {
   margin: 0;
   font-size: 13px;

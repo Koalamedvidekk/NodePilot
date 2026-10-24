@@ -34,6 +34,12 @@ test('isAllowedOrigin handles loopback and LAN modes correctly', () => {
   assert.equal(isAllowedOrigin(undefined, '0.0.0.0', localIps), true);
 });
 
+test('isAllowedOrigin permits only the explicitly configured Onion hostname', () => {
+  const onion = 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz2345.onion';
+  assert.equal(isAllowedOrigin(`http://${onion}`, '127.0.0.1', [], onion), true);
+  assert.equal(isAllowedOrigin('http://other-service.onion', '127.0.0.1', [], onion), false);
+});
+
 test('formatAccessUrls formats URLs depending on host binding', () => {
   const localUrls = formatAccessUrls('127.0.0.1', 7420, ['192.168.1.150']);
   assert.equal(localUrls.local, 'http://localhost:7420');

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
-import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, UpdateStatusState } from '../types';
+import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, TorStatus, UpdateStatusState } from '../types';
 
 export function HostSettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -13,12 +13,16 @@ export function HostSettingsPage() {
   const [settings, setSettings] = useState<HostSettings | null>(null);
   const [startup, setStartup] = useState<HostStartupStatus | null>(null);
   const [playit, setPlayit] = useState<PlayitStatus | null>(null);
+  const [tor, setTor] = useState<TorStatus | null>(null);
+  const [pinConfigured, setPinConfigured] = useState(false);
   const [servers, setServers] = useState<Server[]>([]);
   const [diagnostics, setDiagnostics] = useState<HostDiagnostics | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusState | null>(null);
 
   const [togglingServer, setTogglingServer] = useState<string | null>(null);
   const [togglingPlayit, setTogglingPlayit] = useState(false);
+  const [togglingTor, setTogglingTor] = useState(false);
+  const [resettingTor, setResettingTor] = useState(false);
   const [updatingNodePilot, setUpdatingNodePilot] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -32,6 +36,8 @@ export function HostSettingsPage() {
       setSettings(hostData.settings);
       setStartup(hostData.startup);
       setPlayit(hostData.playit);
+      setTor(hostData.tor);
+      setPinConfigured(hostData.pinConfigured);
       setServers(serverList);
       setDiagnostics(diag);
       setUpdateStatus(updates);
@@ -73,6 +79,28 @@ export function HostSettingsPage() {
       window.clearInterval(timer);
     };
   }, [updatingNodePilot]);
+
+  // Tor creates its hostname quickly, but it may take a little longer to join the
+  // network. Keep this status current only during that short startup phase.
+  useEffect(() => {
+    if (!tor?.isRunning || tor.isReady) return undefined;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const next = await api.getTorStatus();
+        if (!active) return;
+        setTor(next.tor);
+        setPinConfigured(next.pinConfigured);
+      } catch {
+        // The local process may be stopping; the manual Refresh button remains available.
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 2_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [tor?.isReady, tor?.isRunning]);
 
   const handleToggleStartup = async () => {
     if (!settings || !startup) return;
@@ -244,6 +272,54 @@ export function HostSettingsPage() {
       setError(err instanceof Error ? err.message : 'Playit operation failed.');
     } finally {
       setTogglingPlayit(false);
+    }
+  };
+
+  const handleTorToggle = async () => {
+    if (!tor) return;
+    setTogglingTor(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = tor.isRunning ? await api.stopTor() : await api.startTor();
+      setTor(result.tor);
+      setPinConfigured(result.pinConfigured);
+      setSuccessMessage(tor.isRunning
+        ? 'Private remote access is disabled. Your Onion address is no longer reachable.'
+        : 'Private remote access is starting. Your persistent Onion address will appear when Tor is ready.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Private remote access could not be changed.');
+    } finally {
+      setTogglingTor(false);
+    }
+  };
+
+  const handleResetTorAddress = async () => {
+    if (!window.confirm('Reset this Onion address? The old address will stop working permanently.')) return;
+    setResettingTor(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await api.resetTorAddress();
+      setTor(result.tor);
+      setPinConfigured(result.pinConfigured);
+      setSuccessMessage(result.tor.isRunning
+        ? 'A new private Onion address is being created.'
+        : 'The saved Onion address was removed. Enable private remote access to create a new one.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The Onion address could not be reset.');
+    } finally {
+      setResettingTor(false);
+    }
+  };
+
+  const copyTorAddress = async () => {
+    if (!tor?.onionAddress) return;
+    try {
+      await navigator.clipboard.writeText(`http://${tor.onionAddress}`);
+      setSuccessMessage('Private access address copied to your clipboard. Open it in Tor Browser.');
+    } catch {
+      setError('Could not copy the address. Select it manually instead.');
     }
   };
 
@@ -521,7 +597,93 @@ export function HostSettingsPage() {
           </div>
         </section>
 
-        {/* Section 3: Playit.gg Coordination */}
+        {/* Section 3: Private Remote Access */}
+        <section className="settings-section-card">
+          <div className="section-card-header">
+            <div className="section-title-wrap">
+              <Icon name="lock" size={20} />
+              <div>
+                <h3>Private Remote Access (Tor)</h3>
+                <p>Reach this NodePilot panel privately from anywhere without port forwarding, accounts, or a paid relay.</p>
+              </div>
+            </div>
+            <div className="section-header-action">
+              <span className={`status-pill ${tor?.isReady ? 'is-online' : 'is-offline'}`}>
+                {!tor?.supported ? 'Unsupported' : tor?.isReady ? 'Private Address Ready' : tor?.isRunning ? 'Starting Tor' : tor?.enabled ? 'Restore Needed' : 'Disabled'}
+              </span>
+            </div>
+          </div>
+
+          <div className="section-card-body">
+            <div className="setting-row">
+              <div className="setting-info">
+                <strong>Onion Service</strong>
+                <p>
+                  NodePilot runs a local Tor process that forwards one private Onion address to this panel only. It does not open your router, create an account, or expose a Tor SOCKS proxy.
+                </p>
+                {!tor?.supported ? (
+                  <small className="setting-explanation">Private remote access is currently available on Windows and Linux.</small>
+                ) : !tor?.installed ? (
+                  <small className="setting-explanation">
+                    Install <a href="https://www.torproject.org/download/" target="_blank" rel="noreferrer">Tor Browser or Tor Expert Bundle</a> first, then refresh this page. On Linux, your distribution&apos;s <code>tor</code> package is also supported. NodePilot never downloads Tor automatically.
+                  </small>
+                ) : (
+                  <small className="setting-explanation">Tor {tor.version ?? 'installed'} detected locally. {tor.binaryPath && <code>{tor.binaryPath}</code>}</small>
+                )}
+              </div>
+              <div className="setting-action">
+                <button
+                  type="button"
+                  className={`button ${tor?.isRunning ? 'button-danger' : 'button-primary'}`}
+                  onClick={() => void handleTorToggle()}
+                  disabled={togglingTor || !tor?.supported || !tor?.installed || (!tor?.isRunning && !pinConfigured)}
+                  title={!pinConfigured && !tor?.isRunning ? 'Set a panel access PIN in Network & Remote Access before enabling Tor.' : ''}
+                >
+                  {togglingTor ? 'Working...' : tor?.isRunning ? 'Disable Private Access' : 'Enable Private Access'}
+                </button>
+              </div>
+            </div>
+
+            {!pinConfigured && (
+              <div className="setting-detail-box" style={{ borderColor: 'var(--warning, #f59e0b)' }}>
+                <strong>Access PIN required</strong>
+                <p>Before enabling this feature, set a strong panel PIN (at least 10 characters) in <strong>Network &amp; Remote Access</strong> from the sidebar. NodePilot blocks Tor activation without it and will not let you remove it while private access is active.</p>
+              </div>
+            )}
+
+            {tor?.onionAddress && (
+              <div className="setting-detail-box" style={{ borderColor: tor.isReady ? 'var(--cyan)' : undefined }}>
+                <strong>{tor.isReady ? 'Your private access address' : 'Saved private access address'}</strong>
+                <p>{tor.isReady ? 'Open this URL in Tor Browser, then enter your NodePilot access PIN.' : 'This address is persistent, but it is reachable only while private access is enabled and Tor has finished starting.'}</p>
+                <div className="tor-address-row">
+                  <code>http://{tor.onionAddress}</code>
+                  <button type="button" className="button button-secondary button-small" onClick={() => void copyTorAddress()}>
+                    <Icon name="copy" size={15} />
+                    <span>Copy</span>
+                  </button>
+                  <button type="button" className="button button-danger button-small" onClick={() => void handleResetTorAddress()} disabled={resettingTor}>
+                    <Icon name="refresh" size={15} />
+                    <span>{resettingTor ? 'Resetting...' : 'Reset Address'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {tor?.error && (
+              <div className="setting-detail-box" style={{ borderColor: 'var(--danger, #ef4444)' }}>
+                <strong>Tor status</strong>
+                <p>{tor.error}</p>
+              </div>
+            )}
+
+            <div className="setting-detail-box">
+              <strong>Important:</strong>
+              <p>Use Tor Browser for this address. It is designed for private panel access, not high-speed game traffic. Your NodePilot data and servers stay on this computer; the Onion key is kept in NodePilot&apos;s local data folder so the address survives restarts and updates.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* Section 4: Playit.gg Coordination */}
         <section className="settings-section-card">
           <div className="section-card-header">
             <div className="section-title-wrap">

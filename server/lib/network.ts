@@ -58,12 +58,19 @@ export function isAllowedOrigin(
   origin: string | undefined,
   configuredHost: string,
   localAddresses = getLocalNetworkAddresses(),
+  allowedRemoteHostname?: string | null,
 ): boolean {
   if (!origin) return true;
 
   try {
     const url = new URL(origin);
     const hostname = url.hostname.toLowerCase();
+
+    // A private Onion service is an explicit, exact allow-list entry. It is never
+    // treated like a broad public-domain exception.
+    if (allowedRemoteHostname && hostname === allowedRemoteHostname.toLowerCase()) {
+      return true;
+    }
 
     // Loopback is always permitted
     if (['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {

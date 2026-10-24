@@ -185,6 +185,34 @@ Have an old laptop or desktop sitting around? You can turn it into a dedicated M
    - Click the **Local mode / LAN mode** pill in the top header or the host card in the sidebar footer to open the **Network & Remote Access** modal.
    - View your detected IP addresses, copy URLs with 1 click, switch between Local and LAN modes, or update your PIN without restarting manually.
 
+## Private remote panel access with Tor
+
+NodePilot can optionally make **the web panel only** available through a private
+Tor Onion address. This is useful when you want to manage the host from outside
+your home network without port forwarding, a public relay, an account, or a
+mandatory paid service. It is not intended for Minecraft player traffic.
+
+1. Set a strong **Access PIN** of at least 10 characters in **Network & Remote
+   Access**. NodePilot refuses to enable Tor without one, and it will not allow
+   the PIN to be removed while private access is running.
+2. Install Tor yourself from the [Tor Project](https://www.torproject.org/download/).
+   On Linux, the distribution `tor` package is supported; on Windows, Tor Browser
+   or the Tor Expert Bundle is supported. NodePilot deliberately does not download
+   or update this network-facing dependency automatically.
+3. In **Host Settings**, open **Private Remote Access (Tor)** and choose
+   **Enable Private Access**. NodePilot creates a persistent Onion key under its
+   local data directory and displays the resulting `http://…onion` URL.
+4. Open that URL in Tor Browser and enter the same NodePilot panel PIN.
+
+The Onion address and the opt-in setting persist over ordinary NodePilot restarts
+and application updates; after the panel is listening, NodePilot restores the
+local Tor service automatically when the panel PIN is still configured. **Reset
+Address** intentionally destroys that local Onion identity, so the old address
+will no longer work. If Tor is installed somewhere unusual, set
+`NODEPILOT_TOR_PATH` to the absolute path of the `tor` executable before starting
+NodePilot. The managed Tor configuration listens on no SOCKS port and forwards
+only the panel's local `127.0.0.1` port.
+
 ## ⚙️ Host Settings & System Startup (Boot Automation)
 
 NodePilot includes full host integration to run in the background on your PC or home server:

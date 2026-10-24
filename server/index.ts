@@ -17,6 +17,7 @@ loadEnv();
 
 import { openDatabase } from './db.js';
 import { AppError, asAppError, errorMessage } from './lib/errors.js';
+import { pinMatches, requiresPanelPin } from './lib/auth.js';
 import { InstanceLock } from './lib/lockfile.js';
 import { formatAccessUrls, getLocalNetworkAddresses, isAllowedOrigin } from './lib/network.js';
 import { ensureDirectory, managedServerDirectoryExists, resolveManagedServerRoot, safeDirectoryName } from './lib/paths.js';
@@ -37,6 +38,7 @@ import { ServerRuntime } from './services/server-runtime.js';
 import { SystemService } from './services/system-service.js';
 import { StartupService } from './services/startup-service.js';
 import { PlayitService } from './services/playit-service.js';
+import { TorService } from './services/tor-service.js';
 import { AutoStartService } from './services/auto-start-service.js';
 import { ServerTunnelService } from './services/server-tunnel-service.js';
 import { AutoSleepService } from './services/auto-sleep-service.js';
@@ -214,9 +216,10 @@ const playerActionSchema = z.object({
   if (value.action === 'teleport' && !value.teleport) context.addIssue({ code: z.ZodIssueCode.custom, path: ['teleport'], message: 'Provide teleport coordinates.' });
   if (value.action === 'inventory' && !value.inventory) context.addIssue({ code: z.ZodIssueCode.custom, path: ['inventory'], message: 'Provide inventory changes.' });
 });
+const MIN_REMOTE_ACCESS_PIN_LENGTH = 10;
 
-function isAllowedRequestOrigin(origin: string | undefined): boolean {
-  return isAllowedOrigin(origin, config.host);
+function isAllowedRequestOrigin(origin: string | undefined, allowedRemoteHostname?: string | null): boolean {
+  return isAllowedOrigin(origin, config.host, undefined, allowedRemoteHostname);
 }
 
 function publicStatus(status: ServerStatus): ServerStatus | 'stopped' {
@@ -345,6 +348,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   updates.start();
   const startup = new StartupService(hostSettings, path.resolve('.'));
   const playit = new PlayitService(config.dataDirectory);
+  const tor = new TorService(config.dataDirectory);
   const serverTunnelRepo = new ServerTunnelRepository(database);
   const settingsRepository = new ServerSettingsRepository(database);
   const serverTunnels = new ServerTunnelService(serverTunnelRepo, repository, playit, settingsRepository);
@@ -364,9 +368,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   wakeProxy.start();
   const system = new SystemService(repository, config.dataDirectory);
   const app = Fastify({ logger: { level: process.env.NODEPILOT_LOG_LEVEL ?? 'info' }, bodyLimit: 1_100_000 });
+  const isAllowedAppOrigin = (origin: string | undefined) => isAllowedRequestOrigin(origin, tor.getAllowedOriginHostname());
+  const getTorStatus = async () => ({
+    ...(await tor.getStatus()),
+    enabled: hostSettings.getSettings().torEnabled === true,
+  });
 
   await app.register(cors, {
-    origin: (origin, callback) => callback(null, isAllowedRequestOrigin(origin)),
+    origin: (origin, callback) => callback(null, isAllowedAppOrigin(origin)),
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
   });
   await app.register(websocket, { options: { maxPayload: 16_384 } });
@@ -377,20 +386,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.addHook('preHandler', async (request) => {
     if (!config.pin) return;
-    const urlPath = request.url.split('?')[0];
-    if (
-      !urlPath.startsWith('/api/') ||
-      urlPath.startsWith('/api/auth/') ||
-      urlPath === '/api/network' ||
-      urlPath === '/api/bridge/connect'
-    ) {
-      return;
-    }
+    if (!requiresPanelPin(request.url)) return;
 
     const queryPin = (request.query as Record<string, string> | undefined)?.pin;
     const headerPin = request.headers['x-nodepilot-pin'] as string | undefined;
     const providedPin = (headerPin ?? queryPin)?.trim();
-    if (providedPin && providedPin === config.pin) {
+    if (pinMatches(providedPin, config.pin)) {
       return;
     }
 
@@ -880,14 +881,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.get('/api/auth/status', async (request) => {
     const hasPin = Boolean(config.pin);
     const providedPin = (request.headers['x-nodepilot-pin'] as string | undefined)?.trim();
-    const authenticated = !hasPin || (Boolean(providedPin) && providedPin === config.pin);
+    const authenticated = !hasPin || pinMatches(providedPin, config.pin);
     return { hasPin, authenticated };
   });
 
   app.post('/api/auth/verify', async (request) => {
     if (!config.pin) return { ok: true, pinRequired: false };
     const { pin } = pinVerifySchema.parse(request.body);
-    if (pin.trim() !== config.pin) {
+    if (!pinMatches(pin, config.pin)) {
       throw new AppError(401, 'invalid_pin', 'Incorrect access PIN.');
     }
     return { ok: true, pinRequired: true };
@@ -913,6 +914,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.put('/api/network', async (request) => {
     const input = networkUpdateSchema.parse(request.body);
     const pin = input.pin !== undefined ? input.pin : undefined;
+    if ((await tor.getStatus()).isRunning && pin !== undefined && !pin?.trim()) {
+      throw new AppError(409, 'tor_pin_required', 'Set an access PIN before removing it while private remote access is enabled.');
+    }
     await updateEnvFile({
       NODEPILOT_HOST: input.host,
       ...(pin !== undefined ? { NODEPILOT_PIN: pin } : {}),
@@ -939,6 +943,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       settings: hostSettings.getSettings(),
       startup: await startup.getStatus(),
       playit: await playit.getStatus(),
+      tor: await getTorStatus(),
+      pinConfigured: Boolean(config.pin),
     };
   });
 
@@ -1021,6 +1027,35 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.get('/api/host/playit', async () => {
     return { playit: await playit.getStatus() };
+  });
+
+  app.get('/api/host/tor', async () => ({ tor: await getTorStatus(), pinConfigured: Boolean(config.pin) }));
+
+  app.post('/api/host/tor/start', async () => {
+    if (!config.pin) {
+      throw new AppError(409, 'tor_pin_required', 'Set an access PIN in Network & Remote Access before enabling private remote access.');
+    }
+    if (config.pin.length < MIN_REMOTE_ACCESS_PIN_LENGTH) {
+      throw new AppError(422, 'tor_pin_too_short', `Use an access PIN with at least ${MIN_REMOTE_ACCESS_PIN_LENGTH} characters before enabling private remote access.`);
+    }
+    const status = await tor.start(config.port);
+    hostSettings.saveSettings({ torEnabled: true });
+    autoStart.log('info', 'Private Tor remote access enabled by the user.');
+    return { ok: true, tor: { ...status, enabled: true }, pinConfigured: true };
+  });
+
+  app.post('/api/host/tor/stop', async () => {
+    const status = await tor.stop();
+    hostSettings.saveSettings({ torEnabled: false });
+    autoStart.log('info', 'Private Tor remote access disabled by the user.');
+    return { ok: true, tor: { ...status, enabled: false }, pinConfigured: Boolean(config.pin) };
+  });
+
+  app.post('/api/host/tor/reset-address', async (request) => {
+    z.object({ confirm: z.literal(true, { errorMap: () => ({ message: 'Confirm the address reset before continuing.' }) }) }).parse(request.body);
+    const status = await tor.resetAddress(config.port);
+    autoStart.log('info', 'Private Tor Onion address was reset by the user.');
+    return { ok: true, tor: { ...status, enabled: hostSettings.getSettings().torEnabled === true }, pinConfigured: Boolean(config.pin) };
   });
 
   app.post('/api/host/playit/install', async () => {
@@ -1376,7 +1411,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.get('/api/bridge/connect', { websocket: true }, (socket, request) => {
-    if (!isAllowedRequestOrigin(request.headers.origin)) {
+    if (!isAllowedAppOrigin(request.headers.origin)) {
       socket.close(1008, 'Origin not permitted');
       return;
     }
@@ -1387,12 +1422,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const origin = request.headers.origin;
     let server: ServerRecord;
     try {
-      if (!isAllowedRequestOrigin(origin)) {
+      if (!isAllowedAppOrigin(origin)) {
         socket.close(1008, 'Origin not permitted');
         return;
       }
       const pin = (request.query as Record<string, string> | undefined)?.pin ?? (request.headers['x-nodepilot-pin'] as string | undefined);
-      if (config.pin && (!pin || pin.trim() !== config.pin)) {
+      if (config.pin && !pinMatches(pin, config.pin)) {
         socket.close(1008, 'PIN required');
         return;
       }
@@ -1440,10 +1475,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   }
 
   app.decorate('autoStart', autoStart);
+  app.addHook('onListen', async () => {
+    if (!hostSettings.getSettings().torEnabled) return;
+    if (!config.pin) {
+      autoStart.log('warn', 'Private remote access was not restored because the panel access PIN is missing.');
+      return;
+    }
+    if (config.pin.length < MIN_REMOTE_ACCESS_PIN_LENGTH) {
+      autoStart.log('warn', `Private remote access was not restored because the panel access PIN is shorter than ${MIN_REMOTE_ACCESS_PIN_LENGTH} characters.`);
+      return;
+    }
+    try {
+      await tor.start(config.port);
+      autoStart.log('info', 'Private Tor remote access restored after NodePilot started.');
+    } catch (error) {
+      autoStart.log('warn', `Private remote access could not be restored: ${errorMessage(error)}`);
+    }
+  });
   app.addHook('onClose', async () => {
     updates.stop();
     autoSleep.stop();
     wakeProxy.stop();
+    await tor.stop();
     bridge.shutdown();
     await metrics.shutdown();
     await runtime.shutdown();

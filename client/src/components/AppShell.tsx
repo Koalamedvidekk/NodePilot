@@ -59,9 +59,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const loadNetworkAndAuth = useCallback(async () => {
     try {
-      const [net, authState] = await Promise.all([api.network(), api.authStatus()]);
-      setNetwork(net);
+      // Network configuration can disclose local addresses and can change the
+      // panel PIN, so it is intentionally protected once a PIN exists. Resolve
+      // auth first so the PIN prompt still appears before requesting it.
+      const authState = await api.authStatus();
       setAuth(authState);
+      if (authState.hasPin && !authState.authenticated) return;
+      const net = await api.network();
+      setNetwork(net);
     } catch {
       // Offline or network error
     }

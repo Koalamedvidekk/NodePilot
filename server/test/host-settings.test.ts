@@ -27,6 +27,7 @@ test('HostSettingsRepository correctly saves, retrieves, and updates host config
     assert.equal(initial.continueRunningOnClose, true);
     assert.equal(initial.updateSnoozedVersion, null);
     assert.equal(initial.updateSnoozedUntil, null);
+    assert.equal(initial.torEnabled, false);
 
     const updated = repo.saveSettings({
       systemStartupEnabled: true,
@@ -34,6 +35,7 @@ test('HostSettingsRepository correctly saves, retrieves, and updates host config
       openBrowserOnStartup: true,
       updateSnoozedVersion: '0.2.0',
       updateSnoozedUntil: '2030-01-02T03:04:05.000Z',
+      torEnabled: true,
     });
 
     assert.equal(updated.systemStartupEnabled, true);
@@ -41,6 +43,7 @@ test('HostSettingsRepository correctly saves, retrieves, and updates host config
     assert.equal(updated.openBrowserOnStartup, true);
     assert.equal(updated.updateSnoozedVersion, '0.2.0');
     assert.equal(updated.updateSnoozedUntil, '2030-01-02T03:04:05.000Z');
+    assert.equal(updated.torEnabled, true);
 
     // Verify persistence across new repository instance
     const repo2 = new HostSettingsRepository(db);
@@ -50,6 +53,7 @@ test('HostSettingsRepository correctly saves, retrieves, and updates host config
     assert.equal(reloaded.openBrowserOnStartup, true);
     assert.equal(reloaded.updateSnoozedVersion, '0.2.0');
     assert.equal(reloaded.updateSnoozedUntil, '2030-01-02T03:04:05.000Z');
+    assert.equal(reloaded.torEnabled, true);
 
     db.close();
   } finally {
