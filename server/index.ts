@@ -60,7 +60,7 @@ const createServerSchema = z.object({
   version: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/, 'Version has unsupported characters.'),
   port: z.number().int().min(1).max(65_535).optional(),
   memoryMb: z.number().int().min(256).max(65_536).default(2_048),
-  eulaAccepted: z.literal(true, { errorMap: () => ({ message: 'You must explicitly accept the Minecraft EULA.' }) }),
+  eulaAccepted: z.literal(true, { error: 'You must explicitly accept the Minecraft EULA.' }),
   javaPath: z.string().min(1).max(1_024).optional(),
   enablePlayit: z.boolean().optional().default(false),
 }).refine((value) => Boolean(value.software ?? value.flavor), 'Choose a server software implementation.');
@@ -70,7 +70,7 @@ const updateServerSchema = z.object({
   memoryMb: z.number().int().min(256).max(65_536).optional(),
   javaPath: z.string().min(1).max(1_024).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, 'Supply at least one value to update.');
-const propertiesSchema = z.object({ values: z.record(z.string().max(512)) });
+const propertiesSchema = z.object({ values: z.record(z.string(), z.string().max(512)) });
 const fileContentSchema = z.object({
   path: z.string().min(1).max(512),
   content: z.string().max(1_000_000),
@@ -167,7 +167,7 @@ const importServerSchema = z.object({
   version: z.string().trim().max(64).regex(/^[A-Za-z0-9._-]*$/, 'Version has unsupported characters.').optional(),
   port: z.number().int().min(1).max(65_535).optional(),
   memoryMb: z.number().int().min(256).max(65_536).default(2_048),
-  eulaAccepted: z.literal(true, { errorMap: () => ({ message: 'You must explicitly accept the Minecraft EULA.' }) }),
+  eulaAccepted: z.literal(true, { error: 'You must explicitly accept the Minecraft EULA.' }),
 }).refine((value) => Boolean(value.software ?? value.flavor), 'Choose a server software implementation.');
 const addonTypeSchema = z.enum(['plugin', 'mod']);
 const addonSearchQuerySchema = z.object({
@@ -187,7 +187,7 @@ const addonUpdateSchema = z.object({
 });
 const addonRemoveParamsSchema = z.object({ id: idSchema, type: addonTypeSchema, fileName: z.string().trim().min(1).max(256) });
 const addonUploadQuerySchema = z.object({ type: addonTypeSchema });
-const addonRemoveSchema = z.object({ confirm: z.literal(true, { errorMap: () => ({ message: 'Confirm add-on removal before continuing.' }) }) });
+const addonRemoveSchema = z.object({ confirm: z.literal(true, { error: 'Confirm add-on removal before continuing.' }) });
 const MAX_IMPORT_ARCHIVE_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_ADDON_UPLOAD_BYTES = 256 * 1024 * 1024;
 const playerReferenceSchema = z.string().trim().min(3).max(64).refine(
@@ -1031,6 +1031,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.get('/api/host/tor', async () => ({ tor: await getTorStatus(), pinConfigured: Boolean(config.pin) }));
 
+  app.post('/api/host/tor/install', async (request) => {
+    z.object({ confirm: z.literal(true, { error: 'Confirm the Tor installation before continuing.' }) }).parse(request.body);
+    autoStart.log('info', 'Downloading and verifying the official Tor Expert Bundle...');
+    const status = await tor.installManagedBundle();
+    autoStart.log('info', 'Official Tor Expert Bundle installed (' + (status.version ?? 'ready') + ').');
+    return {
+      ok: true,
+      tor: { ...status, enabled: hostSettings.getSettings().torEnabled === true },
+      pinConfigured: Boolean(config.pin),
+    };
+  });
+
   app.post('/api/host/tor/start', async () => {
     if (!config.pin) {
       throw new AppError(409, 'tor_pin_required', 'Set an access PIN in Network & Remote Access before enabling private remote access.');
@@ -1052,7 +1064,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/tor/reset-address', async (request) => {
-    z.object({ confirm: z.literal(true, { errorMap: () => ({ message: 'Confirm the address reset before continuing.' }) }) }).parse(request.body);
+    z.object({ confirm: z.literal(true, { error: 'Confirm the address reset before continuing.' }) }).parse(request.body);
     const status = await tor.resetAddress(config.port);
     autoStart.log('info', 'Private Tor Onion address was reset by the user.');
     return { ok: true, tor: { ...status, enabled: hostSettings.getSettings().torEnabled === true }, pinConfigured: Boolean(config.pin) };

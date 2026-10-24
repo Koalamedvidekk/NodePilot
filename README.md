@@ -195,14 +195,20 @@ mandatory paid service. It is not intended for Minecraft player traffic.
 1. Set a strong **Access PIN** of at least 10 characters in **Network & Remote
    Access**. NodePilot refuses to enable Tor without one, and it will not allow
    the PIN to be removed while private access is running.
-2. Install Tor yourself from the [Tor Project](https://www.torproject.org/download/).
-   On Linux, the distribution `tor` package is supported; on Windows, Tor Browser
-   or the Tor Expert Bundle is supported. NodePilot deliberately does not download
-   or update this network-facing dependency automatically.
-3. In **Host Settings**, open **Private Remote Access (Tor)** and choose
-   **Enable Private Access**. NodePilot creates a persistent Onion key under its
-   local data directory and displays the resulting `http://…onion` URL.
-4. Open that URL in Tor Browser and enter the same NodePilot panel PIN.
+2. In **Host Settings**, open **Private Remote Access (Tor)** and choose
+   **Install Tor (1-Click)**. NodePilot downloads the latest compatible stable
+   **Tor Expert Bundle** from the official Tor Project, verifies the bundle
+   against Tor Project's signed SHA-256 manifest and pinned signing-key
+   fingerprint, then installs it only inside NodePilot's data directory.
+   Existing system or Tor Browser installations are also detected and used.
+3. NodePilot starts private access automatically after that if a valid PIN is
+   already configured; otherwise choose **Enable Private Access** after setting
+   the PIN. It creates a persistent Onion key under its local data directory and
+   displays the resulting `http://…onion` URL.
+4. Open that URL in [Tor Browser](https://www.torproject.org/download/) on the
+   computer or phone you are using remotely, then enter the same NodePilot panel
+   PIN. The Expert Bundle installed by NodePilot is the local Tor service, not a
+   web browser.
 
 The Onion address and the opt-in setting persist over ordinary NodePilot restarts
 and application updates; after the panel is listening, NodePilot restores the
@@ -211,7 +217,9 @@ Address** intentionally destroys that local Onion identity, so the old address
 will no longer work. If Tor is installed somewhere unusual, set
 `NODEPILOT_TOR_PATH` to the absolute path of the `tor` executable before starting
 NodePilot. The managed Tor configuration listens on no SOCKS port and forwards
-only the panel's local `127.0.0.1` port.
+only the panel's local `127.0.0.1` port. One-click installation currently
+supports Windows and Linux x64; other platforms can use an existing Tor
+installation.
 
 ## ⚙️ Host Settings & System Startup (Boot Automation)
 

@@ -816,6 +816,13 @@ export const api = {
     return unwrap(await request<{ tor: TorStatus; pinConfigured: boolean }>('/host/tor'));
   },
 
+  async installTor(): Promise<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }> {
+    return unwrap(await request<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }>('/host/tor/install', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    }));
+  },
+
   async startTor(): Promise<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }> {
     return unwrap(await request<{ ok: boolean; tor: TorStatus; pinConfigured: boolean }>('/host/tor/start', { method: 'POST' }));
   },

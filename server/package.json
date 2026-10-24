@@ -19,10 +19,12 @@
     "@fastify/websocket": "^11.0.0",
     "better-sqlite3": "^12.0.0",
     "dotenv": "^16.4.7",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.7",
+    "openpgp": "^6.3.2",
     "prismarine-nbt": "^2.8.0",
+    "tar": "^7.5.22",
     "yauzl": "^3.4.0",
-    "zod": "^3.24.2"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

@@ -7,6 +7,7 @@ test('panel PIN protects network changes while keeping authentication bootstrap 
   assert.equal(requiresPanelPin('/api/network'), true);
   assert.equal(requiresPanelPin('/api/network?anything=true'), true);
   assert.equal(requiresPanelPin('/api/host/tor/start'), true);
+  assert.equal(requiresPanelPin('/api/host/tor/install'), true);
   assert.equal(requiresPanelPin('/api/auth/status'), false);
   assert.equal(requiresPanelPin('/api/auth/verify'), false);
   assert.equal(requiresPanelPin('/api/bridge/connect'), false);

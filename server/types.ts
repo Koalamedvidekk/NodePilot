@@ -134,6 +134,11 @@ export interface PlayitStatus {
 /** Status of the optional, locally-managed Tor Onion service for the panel. */
 export interface TorStatus {
   supported: boolean;
+  /** Whether NodePilot can install the official Tor Expert Bundle on this host. */
+  autoInstallSupported: boolean;
+  /** True only while a user-requested, verified Tor bundle install is running. */
+  isInstalling: boolean;
+  installStage: 'idle' | 'resolving' | 'verifying' | 'downloading' | 'installing' | 'failed';
   installed: boolean;
   binaryPath: string | null;
   version: string | null;

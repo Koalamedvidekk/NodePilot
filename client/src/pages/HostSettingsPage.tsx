@@ -22,6 +22,7 @@ export function HostSettingsPage() {
   const [togglingServer, setTogglingServer] = useState<string | null>(null);
   const [togglingPlayit, setTogglingPlayit] = useState(false);
   const [togglingTor, setTogglingTor] = useState(false);
+  const [installingTor, setInstallingTor] = useState(false);
   const [resettingTor, setResettingTor] = useState(false);
   const [updatingNodePilot, setUpdatingNodePilot] = useState(false);
 
@@ -80,10 +81,10 @@ export function HostSettingsPage() {
     };
   }, [updatingNodePilot]);
 
-  // Tor creates its hostname quickly, but it may take a little longer to join the
-  // network. Keep this status current only during that short startup phase.
+  // A Tor bundle download or Tor network bootstrap can both take a moment. Keep
+  // the status current while either operation is underway.
   useEffect(() => {
-    if (!tor?.isRunning || tor.isReady) return undefined;
+    if (!installingTor && !tor?.isInstalling && (!tor?.isRunning || tor.isReady)) return undefined;
     let active = true;
     const refresh = async () => {
       try {
@@ -100,7 +101,7 @@ export function HostSettingsPage() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [tor?.isReady, tor?.isRunning]);
+  }, [installingTor, tor?.isInstalling, tor?.isReady, tor?.isRunning]);
 
   const handleToggleStartup = async () => {
     if (!settings || !startup) return;
@@ -310,6 +311,31 @@ export function HostSettingsPage() {
       setError(err instanceof Error ? err.message : 'The Onion address could not be reset.');
     } finally {
       setResettingTor(false);
+    }
+  };
+
+  const handleInstallTor = async () => {
+    if (!tor) return;
+    setInstallingTor(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const installed = await api.installTor();
+      setTor(installed.tor);
+      setPinConfigured(installed.pinConfigured);
+
+      if (installed.pinConfigured) {
+        const started = await api.startTor();
+        setTor(started.tor);
+        setPinConfigured(started.pinConfigured);
+        setSuccessMessage('Tor was installed and private remote access is starting. Your Onion address will appear when Tor is ready.');
+      } else {
+        setSuccessMessage('Tor was installed. Set a strong panel PIN, then enable private remote access.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Tor could not be installed.');
+    } finally {
+      setInstallingTor(false);
     }
   };
 
@@ -623,12 +649,16 @@ export function HostSettingsPage() {
                 </p>
                 {!tor?.supported ? (
                   <small className="setting-explanation">Private remote access is currently available on Windows and Linux.</small>
-                ) : !tor?.installed ? (
+                ) : (
                   <div className="tor-install-help">
-                    <small className="setting-explanation">
-                      Install Tor first, then refresh this page. On Linux, your distribution&apos;s <code>tor</code> package is also supported. NodePilot never downloads or installs Tor automatically.
-                    </small>
-                    <div className="tor-download-actions" aria-label="Official Tor download options">
+                    {!tor?.installed ? (
+                      <small className="setting-explanation">
+                        NodePilot can download, verify, and install the small official Tor runtime for this panel. It does not install a browser or expose a SOCKS proxy.
+                      </small>
+                    ) : (
+                      <small className="setting-explanation">Tor {tor.version ?? 'installed'} detected locally. {tor.binaryPath && <code>{tor.binaryPath}</code>}</small>
+                    )}
+                    <div className="tor-download-actions" aria-label="Tor Browser download">
                       <a
                         className="button button-secondary button-small"
                         href="https://download.torproject.org/tor-browser-for-desktop/"
@@ -639,32 +669,37 @@ export function HostSettingsPage() {
                         <span>Download Tor Browser</span>
                         <Icon name="arrowUpRight" size={14} />
                       </a>
-                      <a
-                        className="button button-secondary button-small"
-                        href="https://download.torproject.org/tor/"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <Icon name="download" size={15} />
-                        <span>Get Tor Expert Bundle</span>
-                        <Icon name="arrowUpRight" size={14} />
-                      </a>
                     </div>
                   </div>
-                ) : (
-                  <small className="setting-explanation">Tor {tor.version ?? 'installed'} detected locally. {tor.binaryPath && <code>{tor.binaryPath}</code>}</small>
                 )}
               </div>
               <div className="setting-action">
-                <button
+                {!tor?.installed ? (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => void handleInstallTor()}
+                    disabled={installingTor || Boolean(tor?.isInstalling) || !tor?.supported || !tor?.autoInstallSupported}
+                    title={!tor?.autoInstallSupported ? 'One-click Tor installation is currently supported on Windows and Linux x64 hosts.' : ''}
+                  >
+                    <Icon name="download" size={16} />
+                    <span>
+                      {installingTor || tor?.isInstalling
+                        ? (tor?.installStage === 'resolving' ? 'Finding Tor...' : tor?.installStage === 'verifying' ? 'Verifying Tor...' : tor?.installStage === 'installing' ? 'Installing Tor...' : 'Downloading Tor...')
+                        : 'Install Tor (1-Click)'}
+                    </span>
+                  </button>
+                ) : (
+                  <button
                   type="button"
                   className={`button ${tor?.isRunning ? 'button-danger' : 'button-primary'}`}
                   onClick={() => void handleTorToggle()}
-                  disabled={togglingTor || !tor?.supported || !tor?.installed || (!tor?.isRunning && !pinConfigured)}
+                  disabled={togglingTor || !tor?.supported || (!tor?.isRunning && !pinConfigured)}
                   title={!pinConfigured && !tor?.isRunning ? 'Set a panel access PIN in Network & Remote Access before enabling Tor.' : ''}
                 >
                   {togglingTor ? 'Working...' : tor?.isRunning ? 'Disable Private Access' : 'Enable Private Access'}
                 </button>
+                )}
               </div>
             </div>
 
