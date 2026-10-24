@@ -46,6 +46,7 @@ import type {
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
 const PIN_KEY = 'nodepilot_pin';
+export const PANEL_AUTH_CHANGED_EVENT = 'nodepilot:panel-auth-changed';
 
 export function getStoredPin(): string | null {
   try {
@@ -59,12 +60,14 @@ export function setStoredPin(pin: string): void {
   try {
     localStorage.setItem(PIN_KEY, pin);
   } catch {}
+  window.dispatchEvent(new Event(PANEL_AUTH_CHANGED_EVENT));
 }
 
 export function clearStoredPin(): void {
   try {
     localStorage.removeItem(PIN_KEY);
   } catch {}
+  window.dispatchEvent(new Event(PANEL_AUTH_CHANGED_EVENT));
 }
 
 export class ApiError extends Error {

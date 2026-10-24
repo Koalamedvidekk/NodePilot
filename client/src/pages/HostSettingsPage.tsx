@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, PANEL_AUTH_CHANGED_EVENT } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
 import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, TorStatus, UpdateStatusState } from '../types';
@@ -52,6 +52,14 @@ export function HostSettingsPage() {
 
   useEffect(() => {
     void loadData();
+  }, [loadData]);
+
+  // A protected page can mount just before the PIN dialog is completed. Reload
+  // its real status as soon as that dialog stores the verified credential.
+  useEffect(() => {
+    const refreshAfterAuthentication = () => void loadData();
+    window.addEventListener(PANEL_AUTH_CHANGED_EVENT, refreshAfterAuthentication);
+    return () => window.removeEventListener(PANEL_AUTH_CHANGED_EVENT, refreshAfterAuthentication);
   }, [loadData]);
 
   // A check or download can take long enough that a one-shot API response would
@@ -635,7 +643,7 @@ export function HostSettingsPage() {
             </div>
             <div className="section-header-action">
               <span className={`status-pill ${tor?.isReady ? 'is-online' : 'is-offline'}`}>
-                {!tor?.supported ? 'Unsupported' : tor?.isReady ? 'Private Address Ready' : tor?.isRunning ? 'Starting Tor' : tor?.enabled ? 'Restore Needed' : 'Disabled'}
+                {!tor ? 'Status Unavailable' : !tor.supported ? 'Unsupported' : tor.isReady ? 'Private Address Ready' : tor.isRunning ? 'Starting Tor' : tor.enabled ? 'Restore Needed' : 'Disabled'}
               </span>
             </div>
           </div>
@@ -647,7 +655,9 @@ export function HostSettingsPage() {
                 <p>
                   NodePilot runs a local Tor process that forwards one private Onion address to this panel only. It does not open your router, create an account, or expose a Tor SOCKS proxy.
                 </p>
-                {!tor?.supported ? (
+                {!tor ? (
+                  <small className="setting-explanation">Unlock the panel with its existing access PIN, then use Refresh to load private-access status.</small>
+                ) : !tor.supported ? (
                   <small className="setting-explanation">Private remote access is currently available on Windows and Linux.</small>
                 ) : (
                   <div className="tor-install-help">
@@ -674,7 +684,12 @@ export function HostSettingsPage() {
                 )}
               </div>
               <div className="setting-action">
-                {!tor?.installed ? (
+                {!tor ? (
+                  <button type="button" className="button button-secondary" onClick={() => void loadData()}>
+                    <Icon name="refresh" size={16} />
+                    <span>Refresh status</span>
+                  </button>
+                ) : !tor.installed ? (
                   <button
                     type="button"
                     className="button button-primary"
@@ -703,7 +718,12 @@ export function HostSettingsPage() {
               </div>
             </div>
 
-            {!pinConfigured && (
+            {!tor ? (
+              <div className="setting-detail-box" style={{ borderColor: 'var(--warning, #f59e0b)' }}>
+                <strong>Panel unlock required</strong>
+                <p>NodePilot could not read private-access status yet. Enter your existing panel PIN in the unlock dialog, then refresh this page.</p>
+              </div>
+            ) : !pinConfigured && (
               <div className="setting-detail-box" style={{ borderColor: 'var(--warning, #f59e0b)' }}>
                 <strong>Access PIN required</strong>
                 <p>Before enabling this feature, set a strong panel PIN (at least 10 characters) in <strong>Network &amp; Remote Access</strong> from the sidebar. NodePilot blocks Tor activation without it and will not let you remove it while private access is active.</p>
