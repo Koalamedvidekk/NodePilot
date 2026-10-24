@@ -101,6 +101,8 @@ export interface HostSettings {
   /** ISO timestamp after which a postponed update reminder may be shown again. */
   updateSnoozedUntil?: string | null;
   updateLastCheckedAt?: string | null;
+  /** Whether the user opted to re-enable private Tor access after NodePilot starts. */
+  torEnabled?: boolean;
 }
 
 export interface HostStartupStatus {
@@ -127,6 +129,20 @@ export interface PlayitStatus {
   secretPath: string | null;
   claimUrl?: string | null;
   error?: string | null;
+}
+
+/** Status of the optional, locally-managed Tor Onion service for the panel. */
+export interface TorStatus {
+  supported: boolean;
+  installed: boolean;
+  binaryPath: string | null;
+  version: string | null;
+  isRunning: boolean;
+  isReady: boolean;
+  onionAddress: string | null;
+  error: string | null;
+  /** User preference to restore the local Tor service after NodePilot starts. */
+  enabled?: boolean;
 }
 
 export type TunnelStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
