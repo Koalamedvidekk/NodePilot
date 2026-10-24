@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, PANEL_AUTH_CHANGED_EVENT } from '../api';
+import { api, PANEL_AUTH_CHANGED_EVENT, PANEL_AUTH_REQUIRED_EVENT } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
 import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, TorStatus, UpdateStatusState } from '../types';
@@ -347,6 +347,8 @@ export function HostSettingsPage() {
     }
   };
 
+  const openPanelUnlock = () => window.dispatchEvent(new Event(PANEL_AUTH_REQUIRED_EVENT));
+
   const copyTorAddress = async () => {
     if (!tor?.onionAddress) return;
     try {
@@ -685,9 +687,9 @@ export function HostSettingsPage() {
               </div>
               <div className="setting-action">
                 {!tor ? (
-                  <button type="button" className="button button-secondary" onClick={() => void loadData()}>
-                    <Icon name="refresh" size={16} />
-                    <span>Refresh status</span>
+                  <button type="button" className="button button-primary" onClick={openPanelUnlock}>
+                    <Icon name="lock" size={16} />
+                    <span>Unlock panel</span>
                   </button>
                 ) : !tor.installed ? (
                   <button
