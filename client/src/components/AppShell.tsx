@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { api } from '../api';
+import { api, PANEL_AUTH_REQUIRED_EVENT } from '../api';
 import { Icon, type IconName } from './Icon';
 import { NetworkModal } from './NetworkModal';
 import { PinModal } from './PinModal';
@@ -54,6 +54,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [network, setNetwork] = useState<NetworkInfo | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [pinPromptOpen, setPinPromptOpen] = useState(false);
   const [networkModalOpen, setNetworkModalOpen] = useState(false);
   const location = useLocation();
 
@@ -64,6 +65,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       // auth first so the PIN prompt still appears before requesting it.
       const authState = await api.authStatus();
       setAuth(authState);
+      setPinPromptOpen(authState.hasPin && !authState.authenticated);
       if (authState.hasPin && !authState.authenticated) return;
       const net = await api.network();
       setNetwork(net);
@@ -76,6 +78,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     void loadNetworkAndAuth();
   }, [loadNetworkAndAuth]);
 
+  // If the first auth-status request races startup, a later protected request
+  // still gives the user a way to unlock instead of leaving the page inert.
+  useEffect(() => {
+    const openPinPrompt = () => setPinPromptOpen(true);
+    window.addEventListener(PANEL_AUTH_REQUIRED_EVENT, openPinPrompt);
+    return () => window.removeEventListener(PANEL_AUTH_REQUIRED_EVENT, openPinPrompt);
+  }, []);
+
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
@@ -86,8 +96,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="app-shell">
-      {auth?.hasPin && !auth.authenticated && (
-        <PinModal onSuccess={() => void loadNetworkAndAuth()} />
+      {(pinPromptOpen || (auth?.hasPin && !auth.authenticated)) && (
+        <PinModal onSuccess={() => {
+          setPinPromptOpen(false);
+          void loadNetworkAndAuth();
+        }} />
       )}
 
       {networkModalOpen && network && (

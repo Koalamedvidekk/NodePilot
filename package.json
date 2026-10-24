@@ -1,6 +1,6 @@
 {
   "name": "nodepilot",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "A local, open-source game server manager",
   "workspaces": [

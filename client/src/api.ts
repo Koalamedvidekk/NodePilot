@@ -47,6 +47,7 @@ import type {
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
 const PIN_KEY = 'nodepilot_pin';
 export const PANEL_AUTH_CHANGED_EVENT = 'nodepilot:panel-auth-changed';
+export const PANEL_AUTH_REQUIRED_EVENT = 'nodepilot:panel-auth-required';
 
 export function getStoredPin(): string | null {
   try {
@@ -105,6 +106,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const detail = body as { message?: string; error?: string } | undefined;
+    if (response.status === 401 && detail?.error === 'pin_required') {
+      window.dispatchEvent(new Event(PANEL_AUTH_REQUIRED_EVENT));
+    }
     throw new ApiError(detail?.message ?? detail?.error ?? `Request failed (${response.status})`, response.status, body);
   }
 
