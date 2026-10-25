@@ -216,7 +216,7 @@ const playerActionSchema = z.object({
   if (value.action === 'teleport' && !value.teleport) context.addIssue({ code: z.ZodIssueCode.custom, path: ['teleport'], message: 'Provide teleport coordinates.' });
   if (value.action === 'inventory' && !value.inventory) context.addIssue({ code: z.ZodIssueCode.custom, path: ['inventory'], message: 'Provide inventory changes.' });
 });
-const MIN_REMOTE_ACCESS_PIN_LENGTH = 10;
+const MIN_REMOTE_ACCESS_PIN_LENGTH = 4;
 
 function isAllowedRequestOrigin(origin: string | undefined, allowedRemoteHostname?: string | null): boolean {
   return isAllowedOrigin(origin, config.host, undefined, allowedRemoteHostname);

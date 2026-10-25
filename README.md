@@ -192,7 +192,7 @@ Tor Onion address. This is useful when you want to manage the host from outside
 your home network without port forwarding, a public relay, an account, or a
 mandatory paid service. It is not intended for Minecraft player traffic.
 
-1. Set a strong **Access PIN** of at least 10 characters in **Network & Remote
+1. Set an **Access PIN** of at least 4 characters in **Network & Remote
    Access**. NodePilot refuses to enable Tor without one, and it will not allow
    the PIN to be removed while private access is running.
 2. In **Host Settings**, open **Private Remote Access (Tor)** and choose

@@ -728,7 +728,7 @@ export function HostSettingsPage() {
             ) : !pinConfigured && (
               <div className="setting-detail-box" style={{ borderColor: 'var(--warning, #f59e0b)' }}>
                 <strong>Access PIN required</strong>
-                <p>Before enabling this feature, set a strong panel PIN (at least 10 characters) in <strong>Network &amp; Remote Access</strong> from the sidebar. NodePilot blocks Tor activation without it and will not let you remove it while private access is active.</p>
+                <p>Before enabling this feature, set a panel PIN of at least 4 characters in <strong>Network &amp; Remote Access</strong> from the sidebar. NodePilot blocks Tor activation without it and will not let you remove it while private access is active.</p>
               </div>
             )}
 

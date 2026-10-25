@@ -186,7 +186,9 @@ export function NetworkModal({ network, onClose, onRefresh }: NetworkModalProps)
                       value={pin}
                       onChange={(e) => setPin(e.target.value)}
                       placeholder={network.hasPin ? '••••••••' : 'e.g. 1234'}
+                      minLength={4}
                     />
+                    <small className="input-note">At least 4 characters are required for private remote access.</small>
                   </label>
                 </div>
               )}
