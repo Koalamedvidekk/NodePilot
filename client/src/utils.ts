@@ -16,13 +16,17 @@ export function formatPercent(value?: number): string {
 }
 
 export function formatUptime(seconds?: number): string {
-  if (seconds === undefined || !Number.isFinite(seconds)) return '—';
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return '—';
+  const totalSec = Math.floor(seconds);
+  const days = Math.floor(totalSec / 86_400);
+  const hours = Math.floor((totalSec % 86_400) / 3_600);
+  const minutes = Math.floor((totalSec % 3_600) / 60);
+  const secs = totalSec % 60;
+
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
 }
 
 export function formatDate(value?: string): string {

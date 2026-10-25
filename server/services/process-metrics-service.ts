@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { cpus, platform } from 'node:os';
 import path from 'node:path';
@@ -13,7 +14,7 @@ const IDLE_TIMEOUT_MS = 45_000;
 const CLEANUP_INTERVAL_MS = 15_000;
 const MAX_DIRECTORY_ENTRIES = 250_000;
 const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024 * 1024;
-const JVM_QUERY_INTERVAL_MS = 10_000;
+const JVM_QUERY_INTERVAL_MS = 4_000;
 const JVM_QUERY_TIMEOUT_MS = 4_000;
 
 export type MetricAvailability = { available: boolean; reason?: string };
@@ -202,14 +203,64 @@ async function executeLimited(command: string, args: string[], timeoutMs: number
   });
 }
 
-function parseJcmdHeap(output: string, configuredMaxBytes: number): ProcessHeapUsage {
-  const match = output.match(/heap[^\n]*?\btotal\s+(\d+)\s*([KMG]),\s*used\s+(\d+)\s*([KMG])/i);
-  const committed = match ? byteUnit(Number(match[1]), match[2]) : undefined;
-  const used = match ? byteUnit(Number(match[3]), match[4]) : undefined;
-  if (!isNonNegative(committed) || !isNonNegative(used)) {
+export function parseJcmdHeap(output: string, configuredMaxBytes: number): ProcessHeapUsage {
+  if (!output || typeof output !== 'string') {
+    return unavailable('No output received from jcmd.');
+  }
+
+  // 1. Used memory (e.g. "used 661053K" or "used 256M")
+  const usedMatch = output.match(/\bused\s+(\d+)\s*([KMG])/i);
+  const used = usedMatch ? byteUnit(Number(usedMatch[1]), usedMatch[2]) : undefined;
+
+  // 2. Committed memory:
+  // - Modern G1GC (Java 21/25): "committed 1048576K"
+  // - ZGC: "capacity 512M"
+  // - Older G1GC / Parallel: "total 1048576K"
+  let committed: number | undefined;
+  const committedMatch = output.match(/\bcommitted\s+(\d+)\s*([KMG])/i);
+  if (committedMatch) {
+    committed = byteUnit(Number(committedMatch[1]), committedMatch[2]);
+  } else {
+    const totalMatch = output.match(/\btotal\s+(\d+)\s*([KMG])/i);
+    if (totalMatch) {
+      committed = byteUnit(Number(totalMatch[1]), totalMatch[2]);
+    } else {
+      const capMatch = output.match(/\bcapacity\s+(\d+)\s*([KMG])/i);
+      if (capMatch) {
+        committed = byteUnit(Number(capMatch[1]), capMatch[2]);
+      }
+    }
+  }
+
+  // 3. Max / reserved memory:
+  // - Modern G1GC: "total reserved 4194304K" or "reserved 4194304K"
+  // - ZGC: "max capacity 2048M"
+  let max: number | undefined;
+  const reservedMatch = output.match(/\b(?:total\s+)?reserved\s+(\d+)\s*([KMG])/i)
+    ?? output.match(/\bmax\s+(?:capacity\s+)?(\d+)\s*([KMG])/i);
+  if (reservedMatch) {
+    max = byteUnit(Number(reservedMatch[1]), reservedMatch[2]);
+  }
+
+  // Fallback: older general match "heap ... total 123K, used 45K"
+  if (!isNonNegative(used) || !isNonNegative(committed)) {
+    const fallbackMatch = output.match(/heap[^\n]*?\btotal\s+(\d+)\s*([KMG]),\s*used\s+(\d+)\s*([KMG])/i);
+    if (fallbackMatch) {
+      const c = byteUnit(Number(fallbackMatch[1]), fallbackMatch[2]);
+      const u = byteUnit(Number(fallbackMatch[3]), fallbackMatch[4]);
+      if (isNonNegative(c) && isNonNegative(u)) {
+        return { available: true, usedBytes: u, committedBytes: c, maxBytes: configuredMaxBytes };
+      }
+    }
     return unavailable('The selected Java runtime did not return parsable heap statistics through jcmd.');
   }
-  return { available: true, usedBytes: used, committedBytes: committed, maxBytes: configuredMaxBytes };
+
+  return {
+    available: true,
+    usedBytes: used,
+    committedBytes: committed,
+    maxBytes: max && max >= committed ? max : configuredMaxBytes,
+  };
 }
 
 function noManagedProcess(server: ServerRecord): ServerUsage {
@@ -469,7 +520,11 @@ export class ProcessMetricsService {
   }
 
   private jcmdPath(javaPath: string | null): string | undefined {
-    return javaPath ? path.join(path.dirname(javaPath), platform() === 'win32' ? 'jcmd.exe' : 'jcmd') : undefined;
+    if (javaPath) {
+      const adjacent = path.join(path.dirname(javaPath), platform() === 'win32' ? 'jcmd.exe' : 'jcmd');
+      if (existsSync(adjacent)) return adjacent;
+    }
+    return platform() === 'win32' ? 'jcmd.exe' : 'jcmd';
   }
 
   private getLinuxClockTicks(): Promise<number> {

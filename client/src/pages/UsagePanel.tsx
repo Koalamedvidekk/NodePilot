@@ -12,6 +12,8 @@ type ChartPoint = {
   cpu?: number;
   memoryMb?: number;
   heapMb?: number;
+  readKb?: number;
+  writeKb?: number;
   networkIn?: number;
   networkOut?: number;
 };
@@ -37,6 +39,8 @@ function historyToChart(history: ServerUsageSample[]): ChartPoint[] {
     cpu: sample.cpuPercent,
     memoryMb: sample.memoryBytes === undefined ? undefined : sample.memoryBytes / (1024 * 1024),
     heapMb: sample.heap?.usedBytes === undefined ? undefined : sample.heap.usedBytes / (1024 * 1024),
+    readKb: sample.disk?.readBytesPerSecond === undefined ? undefined : Math.round(sample.disk.readBytesPerSecond / 1024),
+    writeKb: sample.disk?.writeBytesPerSecond === undefined ? undefined : Math.round(sample.disk.writeBytesPerSecond / 1024),
     networkIn: sample.network?.receivedBytesPerSecond,
     networkOut: sample.network?.sentBytesPerSecond,
   }));
@@ -56,7 +60,20 @@ function ChartEmpty({ reason }: { reason?: string }) {
 
 function ChartTooltip({ active, payload, label, unit = '' }: { active?: boolean; payload?: Array<{ name?: string; value?: number; color?: string }>; label?: string; unit?: string }) {
   if (!active || !payload?.length) return null;
-  return <div className="usage-chart-tooltip"><strong>{label}</strong>{payload.filter((entry) => typeof entry.value === 'number').map((entry) => <span key={entry.name} style={{ color: entry.color }}>{entry.name}: {typeof entry.value === 'number' ? entry.value.toFixed(entry.value < 10 ? 1 : 0) : '—'}{unit}</span>)}</div>;
+  return (
+    <div className="usage-chart-tooltip">
+      <strong>{label}</strong>
+      {payload.filter((entry) => typeof entry.value === 'number').map((entry) => {
+        const val = entry.value as number;
+        let formatted = typeof val === 'number' ? val.toFixed(val < 10 ? 1 : 0) : '—';
+        if (unit === ' KB/s') {
+          formatted = val >= 1024 ? `${(val / 1024).toFixed(1)} MB/s` : `${val.toFixed(0)} KB/s`;
+          return <span key={entry.name} style={{ color: entry.color }}>{entry.name}: {formatted}</span>;
+        }
+        return <span key={entry.name} style={{ color: entry.color }}>{entry.name}: {formatted}{unit}</span>;
+      })}
+    </div>
+  );
 }
 
 export function UsagePanel({ server }: { server: Server }) {
@@ -123,28 +140,197 @@ export function UsagePanel({ server }: { server: Server }) {
   const diskUnavailable = metricReason(usage, 'disk');
   const networkUnavailable = metricReason(usage, 'network');
 
-  return <section className="usage-panel">
-    <div className="usage-heading">
-      <div><p className="eyebrow">LIVE PROCESS METRICS</p><h3>Usage</h3><p>Metrics are sampled only from this server’s managed Java process. Nothing is substituted from whole-machine usage.</p></div>
-      <span className={`usage-refresh-state ${isPollingStatus(server.status) ? 'is-live' : ''}`}><i /> {isPollingStatus(server.status) ? 'Refreshing every 2 seconds' : 'Server is not running'}</span>
-    </div>
+  return (
+    <section className="usage-panel">
+      <div className="usage-heading">
+        <div>
+          <p className="eyebrow">LIVE PROCESS METRICS</p>
+          <h3>Usage</h3>
+          <p>Metrics are sampled only from this server’s managed Java process. Nothing is substituted from whole-machine usage.</p>
+        </div>
+        <span className={`usage-refresh-state ${isPollingStatus(server.status) ? 'is-live' : ''}`}>
+          <i /> {isPollingStatus(server.status) ? 'Refreshing every 2 seconds' : 'Server is not running'}
+        </span>
+      </div>
 
-    {error && <div className="inline-alert alert-error usage-error" role="alert"><Icon name="warning" size={18} /><div><strong>Usage data is unavailable.</strong><span>{error}</span></div></div>}
+      {error && (
+        <div className="inline-alert alert-error usage-error" role="alert">
+          <Icon name="warning" size={18} />
+          <div>
+            <strong>Usage data is unavailable.</strong>
+            <span>{error}</span>
+          </div>
+        </div>
+      )}
 
-    <div className="usage-metric-grid">
-      <MetricCard title="CPU" value={current?.cpuPercent === undefined ? 'Unavailable' : formatPercent(current.cpuPercent)} detail={cpuUnavailable ?? 'Share of total logical machine capacity'} unavailable={current?.cpuPercent === undefined} />
-      <MetricCard title="Process memory" value={current?.memoryBytes === undefined ? 'Unavailable' : formatBytes(current.memoryBytes)} detail={memoryUnavailable ?? 'Resident memory (RSS), not Java heap'} unavailable={current?.memoryBytes === undefined} />
-      <MetricCard title="Java heap" value={heap?.usedBytes === undefined ? 'Unavailable' : formatBytes(heap.usedBytes)} detail={heapUnavailable ?? `${formatBytes(heap?.committedBytes)} committed · ${formatBytes(heap?.maxBytes)} configured`} unavailable={heap?.usedBytes === undefined} />
-      <MetricCard title="Server directory" value={disk?.directoryBytes === undefined ? 'Measuring…' : formatBytes(disk.directoryBytes)} detail={diskUnavailable ?? `I/O ${formatBytes(disk?.readBytesPerSecond)}/s read · ${formatBytes(disk?.writeBytesPerSecond)}/s write`} unavailable={disk?.directoryBytes === undefined} />
-      <MetricCard title="Network" value={network?.receivedBytesPerSecond === undefined && network?.sentBytesPerSecond === undefined ? 'Unavailable' : `${formatBytes(network.receivedBytesPerSecond)}/s`} detail={networkUnavailable ?? `${formatBytes(network?.sentBytesPerSecond)}/s sent`} unavailable={network?.receivedBytesPerSecond === undefined && network?.sentBytesPerSecond === undefined} />
-      <MetricCard title="Uptime" value={current?.uptimeMs === undefined ? 'Unavailable' : formatUptime(current.uptimeMs / 1_000)} detail={current?.timestamp ? `Sampled ${new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' }).format(new Date(current.timestamp))}` : 'No managed process sample yet'} unavailable={current?.uptimeMs === undefined} />
-    </div>
+      <div className="usage-metric-grid">
+        <MetricCard
+          title="CPU"
+          value={current?.cpuPercent === undefined ? 'Measuring…' : formatPercent(current.cpuPercent)}
+          detail={cpuUnavailable ?? 'Share of total logical machine capacity'}
+          unavailable={current?.cpuPercent === undefined}
+        />
+        <MetricCard
+          title="Process memory"
+          value={current?.memoryBytes === undefined ? 'Measuring…' : formatBytes(current.memoryBytes)}
+          detail={memoryUnavailable ?? 'Resident memory (RSS), not Java heap'}
+          unavailable={current?.memoryBytes === undefined}
+        />
+        <MetricCard
+          title="Java heap"
+          value={heap?.usedBytes === undefined ? (heapUnavailable ? 'Unavailable' : 'Measuring…') : formatBytes(heap.usedBytes)}
+          detail={
+            heap?.usedBytes !== undefined && heap?.committedBytes
+              ? `${Math.round((heap.usedBytes / heap.committedBytes) * 100)}% of ${formatBytes(heap.committedBytes)} committed · max ${formatBytes(heap?.maxBytes)}`
+              : (heapUnavailable ?? `${formatBytes(heap?.committedBytes)} committed · ${formatBytes(heap?.maxBytes)} configured`)
+          }
+          unavailable={heap?.usedBytes === undefined}
+        />
+        <MetricCard
+          title="Server directory"
+          value={disk?.directoryBytes === undefined ? 'Measuring…' : formatBytes(disk.directoryBytes)}
+          detail={
+            diskUnavailable ??
+            ((disk?.readBytesPerSecond || disk?.writeBytesPerSecond)
+              ? `I/O: ${formatBytes(disk.readBytesPerSecond)}/s read · ${formatBytes(disk.writeBytesPerSecond)}/s write`
+              : 'World storage verified · I/O idle')
+          }
+          unavailable={disk?.directoryBytes === undefined}
+        />
+        <MetricCard
+          title="Network"
+          value={
+            network?.receivedBytesPerSecond !== undefined
+              ? `${formatBytes(network.receivedBytesPerSecond)}/s`
+              : `Port ${server.port}`
+          }
+          detail={
+            network?.receivedBytesPerSecond !== undefined
+              ? `${formatBytes(network?.sentBytesPerSecond)}/s sent`
+              : `Listening on all interfaces (0.0.0.0:${server.port})`
+          }
+          unavailable={false}
+        />
+        <MetricCard
+          title="Uptime"
+          value={current?.uptimeMs === undefined ? 'Starting…' : formatUptime(current.uptimeMs / 1_000)}
+          detail={
+            current?.timestamp
+              ? `Live · Sampled ${new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' }).format(new Date(current.timestamp))}`
+              : 'No managed process sample yet'
+          }
+          unavailable={current?.uptimeMs === undefined}
+        />
+      </div>
 
-    <div className="usage-chart-grid">
-      <section className="panel usage-chart-card"><div className="panel-heading"><div><h3>CPU activity</h3><p>Process CPU normalized across all logical CPUs.</p></div></div>{chartData.length > 1 ? <div className="usage-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><defs><linearGradient id="cpuFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#8d77ff" stopOpacity={0.42} /><stop offset="100%" stopColor="#8d77ff" stopOpacity={0} /></linearGradient></defs><CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" /><XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} /><YAxis unit="%" width={38} tickLine={false} axisLine={false} /><Tooltip content={<ChartTooltip unit="%" />} /><Area type="monotone" dataKey="cpu" name="CPU" stroke="#9d8bff" fill="url(#cpuFill)" strokeWidth={2} isAnimationActive={false} /></AreaChart></ResponsiveContainer></div> : <ChartEmpty reason={loading ? 'Collecting the first process sample…' : cpuUnavailable} />}</section>
-      <section className="panel usage-chart-card"><div className="panel-heading"><div><h3>Memory and heap</h3><p>RSS is measured from the process; heap needs Java’s local jcmd tool.</p></div></div>{chartData.length > 1 ? <div className="usage-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" /><XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} /><YAxis unit=" MB" width={52} tickLine={false} axisLine={false} /><Tooltip content={<ChartTooltip unit=" MB" />} /><Legend /><Line type="monotone" dataKey="memoryMb" name="Process RSS" stroke="#66d8bb" strokeWidth={2} dot={false} isAnimationActive={false} /><Line type="monotone" dataKey="heapMb" name="Java heap" stroke="#f6bf61" strokeWidth={2} dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer></div> : <ChartEmpty reason={loading ? 'Collecting the first process sample…' : memoryUnavailable ?? heapUnavailable} />}</section>
-      <section className="panel usage-chart-card usage-network-card"><div className="panel-heading"><div><h3>Network activity</h3><p>Per-process network accounting is shown only when a reliable host collector is available.</p></div></div>{chartData.some((point) => point.networkIn !== undefined || point.networkOut !== undefined) ? <div className="usage-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" /><XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip content={<ChartTooltip unit=" B/s" />} /><Legend /><Line type="monotone" dataKey="networkIn" name="Received" stroke="#69c8ff" strokeWidth={2} dot={false} isAnimationActive={false} /><Line type="monotone" dataKey="networkOut" name="Sent" stroke="#d891ff" strokeWidth={2} dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer></div> : <ChartEmpty reason={networkUnavailable ?? 'No reliable per-process network collector is available on this host.'} />}</section>
-    </div>
-    <p className="usage-footnote">History is retained in memory for this NodePilot session only (up to 300 samples, about 10 minutes while this tab is open). Stopping NodePilot never reattaches metrics to an old PID.</p>
-  </section>;
+      <div className="usage-chart-grid">
+        <section className="panel usage-chart-card">
+          <div className="panel-heading">
+            <div>
+              <h3>CPU activity</h3>
+              <p>Process CPU normalized across all logical CPUs.</p>
+            </div>
+          </div>
+          {chartData.length > 1 ? (
+            <div className="usage-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="cpuFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#8d77ff" stopOpacity={0.42} />
+                      <stop offset="100%" stopColor="#8d77ff" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" />
+                  <XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} />
+                  <YAxis unit="%" width={38} tickLine={false} axisLine={false} />
+                  <Tooltip content={<ChartTooltip unit="%" />} />
+                  <Area type="monotone" dataKey="cpu" name="CPU" stroke="#9d8bff" fill="url(#cpuFill)" strokeWidth={2} isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <ChartEmpty reason={loading ? 'Collecting the first process sample…' : cpuUnavailable} />
+          )}
+        </section>
+
+        <section className="panel usage-chart-card">
+          <div className="panel-heading">
+            <div>
+              <h3>Memory and heap</h3>
+              <p>RSS is measured from the process; heap needs Java’s local jcmd tool.</p>
+            </div>
+          </div>
+          {chartData.length > 1 ? (
+            <div className="usage-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" />
+                  <XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} />
+                  <YAxis unit=" MB" width={52} tickLine={false} axisLine={false} />
+                  <Tooltip content={<ChartTooltip unit=" MB" />} />
+                  <Legend />
+                  <Line type="monotone" dataKey="memoryMb" name="Process RSS" stroke="#66d8bb" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="heapMb" name="Java heap" stroke="#f6bf61" strokeWidth={2} dot={false} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <ChartEmpty reason={loading ? 'Collecting the first process sample…' : memoryUnavailable ?? heapUnavailable} />
+          )}
+        </section>
+
+        {chartData.some((point) => point.networkIn !== undefined || point.networkOut !== undefined) ? (
+          <section className="panel usage-chart-card usage-network-card">
+            <div className="panel-heading">
+              <div>
+                <h3>Network activity</h3>
+                <p>Per-process network throughput (received and sent).</p>
+              </div>
+            </div>
+            <div className="usage-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" />
+                  <XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} />
+                  <YAxis tickLine={false} axisLine={false} />
+                  <Tooltip content={<ChartTooltip unit=" B/s" />} />
+                  <Legend />
+                  <Line type="monotone" dataKey="networkIn" name="Received" stroke="#69c8ff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="networkOut" name="Sent" stroke="#d891ff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        ) : (
+          <section className="panel usage-chart-card usage-network-card">
+            <div className="panel-heading">
+              <div>
+                <h3>Storage &amp; I/O activity</h3>
+                <p>Real-time read and write transfer rates from the server process.</p>
+              </div>
+            </div>
+            {chartData.length > 1 ? (
+              <div className="usage-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,.08)" />
+                    <XAxis dataKey="label" minTickGap={36} tickLine={false} axisLine={false} />
+                    <YAxis unit=" KB/s" width={60} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip unit=" KB/s" />} />
+                    <Legend />
+                    <Line type="monotone" dataKey="readKb" name="Read I/O" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="writeKb" name="Write I/O" stroke="#c084fc" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <ChartEmpty reason={loading ? 'Collecting process I/O samples…' : 'I/O transfer rates will display while the server is active.'} />
+            )}
+          </section>
+        )}
+      </div>
+      <p className="usage-footnote">History is retained in memory for this NodePilot session only (up to 300 samples, about 10 minutes while this tab is open). Stopping NodePilot never reattaches metrics to an old PID.</p>
+    </section>
+  );
 }
