@@ -169,13 +169,10 @@ export class StartupService {
     openBrowserOnStartup: boolean,
   ): Promise<void> {
     const nodeExecutable = process.execPath;
-    let workingDir = path.resolve(this.projectRoot);
-    let serverEntry = path.join(workingDir, 'dist', 'index.js');
+    const workingDir = path.resolve(this.projectRoot);
+    let serverEntry = path.join(workingDir, 'server', 'dist', 'index.js');
     if (!existsSync(serverEntry)) {
-      serverEntry = path.join(workingDir, 'server', 'dist', 'index.js');
-    }
-    if (existsSync(serverEntry)) {
-      workingDir = path.dirname(path.dirname(serverEntry));
+      serverEntry = path.join(workingDir, 'dist', 'index.js');
     }
 
     const lines: string[] = [
@@ -212,13 +209,10 @@ export class StartupService {
     _openBrowserOnStartup: boolean,
   ): Promise<void> {
     const nodeExecutable = process.execPath;
-    let workingDir = path.resolve(this.projectRoot);
-    let serverEntry = path.join(workingDir, 'dist', 'index.js');
+    const workingDir = path.resolve(this.projectRoot);
+    let serverEntry = path.join(workingDir, 'server', 'dist', 'index.js');
     if (!existsSync(serverEntry)) {
-      serverEntry = path.join(workingDir, 'server', 'dist', 'index.js');
-    }
-    if (existsSync(serverEntry)) {
-      workingDir = path.dirname(path.dirname(serverEntry));
+      serverEntry = path.join(workingDir, 'dist', 'index.js');
     }
 
     const serviceContent = `[Unit]
