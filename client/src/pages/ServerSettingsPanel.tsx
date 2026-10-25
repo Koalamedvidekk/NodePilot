@@ -873,6 +873,18 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                         value={maxMemory}
                         onChange={(e) => setMaxMemory(e.target.value)}
                       />
+                      <div className="memory-presets" style={{ marginTop: '6px' }} aria-label="Max memory presets">
+                        {['2G', '4G', '6G', '8G', '12G', '16G'].map((preset) => (
+                          <button
+                            type="button"
+                            key={preset}
+                            className={maxMemory.trim().toUpperCase() === preset ? 'is-selected' : ''}
+                            onClick={() => setMaxMemory(preset)}
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
                       <small className="card-hint">
                         Current allocated limit: {maxMemory.trim() ? maxMemory.trim() : `${server.memoryMb ?? 2048}M`}
                       </small>

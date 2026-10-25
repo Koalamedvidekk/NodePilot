@@ -701,11 +701,11 @@ function MemoryAllocationControl({ server, onSave, actionBusy }: { server: Serve
       {editable ? (
         <form className="memory-allocation-form" onSubmit={(event) => void submit(event)}>
           <div className="memory-presets" aria-label="Memory presets">
-            {[1_024, 1_536, 2_048, 2_560].map((preset) => <button className={parsedMemory === preset ? 'is-selected' : ''} type="button" key={preset} onClick={() => changeMemory(String(preset))} disabled={saving || actionBusy}>{preset >= 1_024 ? `${preset / 1_024} GB` : `${preset} MB`}</button>)}
+            {[1_024, 2_048, 4_096, 6_144, 8_192, 12_288, 16_384, 32_768].map((preset) => <button className={parsedMemory === preset ? 'is-selected' : ''} type="button" key={preset} onClick={() => changeMemory(String(preset))} disabled={saving || actionBusy}>{preset >= 1_024 ? `${preset / 1_024} GB` : `${preset} MB`}</button>)}
           </div>
           <label className="memory-input"><span className="sr-only">Maximum memory in megabytes</span><input inputMode="numeric" value={memoryMb} onChange={(event) => changeMemory(event.target.value)} aria-describedby="memory-help" disabled={saving || actionBusy} /><span>MB</span></label>
           <button className="button button-secondary" type="submit" disabled={saving || actionBusy || !validMemory || parsedMemory === currentMemory}>{saving ? 'Saving…' : 'Save memory'}</button>
-          <p className="input-note" id="memory-help">Choose 1–2.5 GB for a small, lightly used server. The new limit applies on its next start.</p>
+          <p className="input-note" id="memory-help">Choose 2–4 GB for vanilla, or 6–12+ GB for modded servers with plugins. The new limit applies on its next start.</p>
           {saved && <p className="memory-feedback success"><Icon name="check" size={15} /> Maximum memory saved.</p>}
           {error && <p className="memory-feedback error" role="alert"><Icon name="warning" size={15} /> {error}</p>}
         </form>

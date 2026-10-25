@@ -204,7 +204,23 @@ export function ImportServerPage() {
             </div>
             <label className="field-group form-field"><span>Minecraft version</span><input value={version} onChange={(event) => setVersion(event.target.value.replace(/[^A-Za-z0-9._-]/g, ''))} placeholder="1.21.4" /></label>
             <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder="Auto-select" /><small className="input-note">The original port is retained when free; otherwise NodePilot updates only the managed copy.</small></label>
-            <label className="field-group form-field"><span>Maximum memory (MB)</span><input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} /><small className="input-note">The Java heap ceiling; it can be changed again while stopped.</small></label>
+            <div className="field-group form-field">
+              <span>Maximum memory (MB)</span>
+              <input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} />
+              <div className="memory-presets" style={{ marginTop: '6px' }} aria-label="Memory presets">
+                {[1_024, 2_048, 4_096, 6_144, 8_192, 12_288, 16_384].map((preset) => (
+                  <button
+                    className={Number(memoryMb) === preset ? 'is-selected' : ''}
+                    type="button"
+                    key={preset}
+                    onClick={() => setMemoryMb(String(preset))}
+                  >
+                    {preset >= 1_024 ? `${preset / 1_024} GB` : `${preset} MB`}
+                  </button>
+                ))}
+              </div>
+              <small className="input-note">The Java heap ceiling; it can be changed again while stopped.</small>
+            </div>
           </div>
           <label className={`eula-agreement ${eulaAccepted ? 'is-accepted' : ''}`}><input type="checkbox" checked={eulaAccepted} onChange={(event) => setEulaAccepted(event.target.checked)} /><span className="checkbox-mark"><Icon name="check" size={15} /></span><span><strong>I accept the Minecraft EULA for this managed copy</strong><small>NodePilot will set eula=true only in the copied server directory. Your original source remains unchanged.</small></span></label>
           <div className="import-submit-row"><div className="safe-note"><Icon name="check" size={17} /><span>Source files are copied, never moved or overwritten.</span></div><button className="button button-primary" type="submit" disabled={importing || !inspection.canImport || !eulaAccepted}>{importing ? <><span className="button-loader" /> Copying server…</> : <><Icon name="plus" size={17} /> Import server</>}</button></div>

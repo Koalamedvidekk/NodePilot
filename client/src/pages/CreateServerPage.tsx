@@ -313,7 +313,23 @@ export function CreateServerPage() {
               <div className="form-grid">
                 <label className="field-group form-field form-field-wide"><span>Server name</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={64} placeholder={isBedrock ? 'My Bedrock server' : 'My Minecraft server'} /><small className="input-note">Used only in NodePilot. Server files get a safe directory name automatically.</small></label>
                 <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder={isBedrock ? 'Auto-select (19132)' : 'Auto-select'} /><small className="input-note">Leave blank for a free local port.</small></label>
-                <label className="field-group form-field"><span>Memory limit (MB)</span><input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} placeholder="2048" /><small className="input-note">{isBedrock ? 'Process memory allocation.' : 'Java heap allocation.'}</small></label>
+                <div className="field-group form-field">
+                  <span>Memory limit (MB)</span>
+                  <input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} placeholder="2048" />
+                  <div className="memory-presets" style={{ marginTop: '6px' }} aria-label="Memory presets">
+                    {[1_024, 2_048, 4_096, 6_144, 8_192, 12_288, 16_384].map((preset) => (
+                      <button
+                        className={Number(memoryMb) === preset ? 'is-selected' : ''}
+                        type="button"
+                        key={preset}
+                        onClick={() => setMemoryMb(String(preset))}
+                      >
+                        {preset >= 1_024 ? `${preset / 1_024} GB` : `${preset} MB`}
+                      </button>
+                    ))}
+                  </div>
+                  <small className="input-note">{isBedrock ? 'Process memory allocation.' : 'Java heap allocation (2–4 GB vanilla, 6–12+ GB modded).'}</small>
+                </div>
               </div>
 
               {isBedrock ? (

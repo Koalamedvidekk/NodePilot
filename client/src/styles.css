@@ -760,7 +760,7 @@ select option:hover {
 .memory-allocation-copy p { margin: 4px 0 0; color: var(--muted-2); font-size: 11px; line-height: 1.45; }
 .memory-allocation-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; margin-top: 13px; }
 .memory-presets { display: flex; flex-wrap: wrap; grid-column: 1 / -1; gap: 6px; }
-.memory-presets button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: rgba(5,8,14,.32); font-size: 10px; font-weight: 700; }
+.memory-presets button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: rgba(5,8,14,.32); font-size: 10px; font-weight: 700; cursor: pointer; transition: all .15s ease; }
 .memory-presets button:hover:not(:disabled), .memory-presets button.is-selected { border-color: rgba(133,112,255,.65); color: #e9e4ff; background: rgba(123,101,255,.14); }
 .memory-presets button:disabled { cursor: not-allowed; opacity: .55; }
 .memory-input { display: flex; align-items: center; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: rgba(5,8,14,.32); }
