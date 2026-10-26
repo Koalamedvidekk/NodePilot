@@ -13,6 +13,9 @@ export function ServerTunnelCard({ server }: { server: Server }) {
   const [copiedPort, setCopiedPort] = useState(false);
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
+  const [claimUrl, setClaimUrl] = useState<string | null>(null);
+  const [claimingPlayit, setClaimingPlayit] = useState(false);
+  const [claimCopied, setClaimCopied] = useState(false);
 
   const loadTunnel = async () => {
     try {
@@ -51,6 +54,66 @@ export function ServerTunnelCard({ server }: { server: Server }) {
     }, hasPublicAddress ? 15_000 : 3_500);
     return () => window.clearInterval(interval);
   }, [server.id, hasPublicAddress]);
+
+  // Auto-detect when Playit account is linked while a claim is in-flight
+  useEffect(() => {
+    const activeClaim = claimUrl || playit?.claimUrl;
+    if (!activeClaim || playit?.secretExists) return undefined;
+
+    let active = true;
+    const interval = window.setInterval(async () => {
+      try {
+        const next = await api.getPlayitStatus();
+        if (!active) return;
+        if (next.secretExists) {
+          setPlayit(next);
+          setClaimUrl(null);
+          setSuccess('🎉 Playit account linked! Now create your server tunnel on Playit.gg.');
+          void loadTunnel();
+        }
+      } catch {
+        // Continue polling silently
+      }
+    }, 2_500);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [claimUrl, playit?.claimUrl, playit?.secretExists]);
+
+  const handleClaimPlayit = async () => {
+    setClaimingPlayit(true);
+    setError(undefined);
+    setSuccess(undefined);
+
+    // Call window.open synchronously within user click event context to avoid browser popup blockers
+    const preOpenedWindow = window.open('about:blank', '_blank');
+
+    try {
+      const res = await api.claimPlayitAccount();
+      setClaimUrl(res.claimUrl);
+      setPlayit(res.playit);
+      setSuccess('Playit agent connected! Complete linking in your browser tab.');
+
+      if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.location.href = res.claimUrl;
+        preOpenedWindow.focus();
+      } else {
+        const fallback = window.open(res.claimUrl, '_blank', 'noopener,noreferrer');
+        if (!fallback) {
+          setSuccess('Popup blocked by browser. Click "Open Claim Page" below to connect.');
+        }
+      }
+    } catch (cause) {
+      if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.close();
+      }
+      setError(errorMessage(cause));
+    } finally {
+      setClaimingPlayit(false);
+    }
+  };
 
   const handleCopy = async () => {
     if (!effectiveAddress) return;
@@ -262,11 +325,65 @@ export function ServerTunnelCard({ server }: { server: Server }) {
               </div>
             )}
           </div>
+        ) : !playit?.secretExists ? (
+          <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.35)', background: 'rgba(56, 189, 248, 0.08)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Icon name="wifi" size={18} />
+              <strong style={{ fontSize: '15px', color: 'var(--cyan)' }}>Step 1: Link your Playit.gg Account</strong>
+            </div>
+            <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.5 }}>
+              Your Playit agent is not linked to an account yet. Link this computer with 1 click so Playit can assign a public address to your server.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void handleClaimPlayit()}
+                disabled={claimingPlayit}
+              >
+                <Icon name="arrowUpRight" size={15} />
+                <span>{claimingPlayit ? 'Connecting Agent…' : 'Link Playit Account (1-Click)'}</span>
+              </button>
+              {(claimUrl || playit?.claimUrl) && (
+                <>
+                  <a
+                    href={claimUrl || playit?.claimUrl || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="button button-secondary"
+                  >
+                    <Icon name="arrowUpRight" size={15} />
+                    <span>Open Claim Page</span>
+                  </a>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={async () => {
+                      const link = claimUrl || playit?.claimUrl;
+                      if (!link) return;
+                      await navigator.clipboard.writeText(link).catch(() => undefined);
+                      setClaimCopied(true);
+                      setTimeout(() => setClaimCopied(false), 2000);
+                    }}
+                  >
+                    <Icon name={claimCopied ? 'check' : 'copy'} size={15} />
+                    <span>{claimCopied ? 'Copied!' : 'Copy Link'}</span>
+                  </button>
+                </>
+              )}
+            </div>
+            {(claimUrl || playit?.claimUrl) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px', color: 'var(--cyan)' }}>
+                <span className="button-loader" style={{ width: '13px', height: '13px' }} />
+                <span>Waiting for account link on playit.gg… NodePilot will detect it automatically!</span>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255, 209, 106, 0.35)', background: 'rgba(255, 209, 106, 0.08)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Icon name="info" size={18} />
-              <strong style={{ fontSize: '15px' }}>Action Required: Add Tunnel on Playit.gg</strong>
+              <strong style={{ fontSize: '15px' }}>Step 2: Add Tunnel on Playit.gg</strong>
             </div>
             <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.5 }}>
               Playit requires creating the tunnel once in your account so their global proxy allocates your public IP/domain.

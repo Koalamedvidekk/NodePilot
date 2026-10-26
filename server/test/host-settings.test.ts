@@ -194,6 +194,28 @@ test('PlayitService setSecretKey and resetSecret handle credentials cleanly', as
   }
 });
 
+test('PlayitService claimAccount resets existing secret file so fresh claim URL can be emitted', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-playit-claim-'));
+  const fakeSecretPath = path.join(tempDir, 'playit.toml');
+
+  try {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(fakeSecretPath, 'secret_key = "stale-key"\n', 'utf8');
+
+    const playit = new PlayitService(tempDir);
+    playit.getSecretPath = () => fakeSecretPath;
+
+    const { existsSync } = await import('node:fs');
+    assert.strictEqual(existsSync(fakeSecretPath), true);
+
+    // Calling resetSecret removes the file
+    await playit.resetSecret();
+    assert.strictEqual(existsSync(fakeSecretPath), false);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('AutoStartService records diagnostics and handles server autostart gracefully', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-auto-'));
   const dbPath = path.join(tempDir, 'test.sqlite');

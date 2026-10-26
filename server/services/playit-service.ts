@@ -434,9 +434,10 @@ export class PlayitService {
    * so playit.gg immediately detects the agent as ONLINE when the user opens the page.
    */
   async claimAccount(): Promise<{ claimUrl: string; claimCode: string }> {
-    const status = await this.getStatus();
+    let status = await this.getStatus();
     if (!status.installed || !status.binaryPath) {
-      throw new Error('Playit CLI must be installed before claiming an account.');
+      // Auto-install managed Playit binary so 1-click claim succeeds without manual pre-install
+      status = await this.installManagedBinary();
     }
 
     // Stop existing process if running to start fresh claim session
@@ -449,12 +450,26 @@ export class PlayitService {
       this.exchangeProcess = null;
     }
 
-    const binaryPath = status.binaryPath;
+    // Remove existing secret file before starting claim, otherwise
+    // playit CLI loads the existing secret and never prints a claim URL
+    const secretPath = this.getSecretPath();
+    if (secretPath && existsSync(secretPath)) {
+      await unlink(secretPath).catch(() => undefined);
+    }
+    this.activeClaimUrl = null;
+
+    const binaryPath = status.binaryPath!;
 
     return new Promise<{ claimUrl: string; claimCode: string }>((resolve, reject) => {
       let resolved = false;
 
-      const child: ChildProcess = spawn(binaryPath, ['--stdout'], {
+      const args: string[] = [];
+      if (secretPath) {
+        args.push('--secret_path', secretPath);
+      }
+      args.push('--stdout');
+
+      const child: ChildProcess = spawn(binaryPath, args, {
         detached: false,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
@@ -473,7 +488,8 @@ export class PlayitService {
       this.childProcess = child;
 
       const handleOutput = (chunk: Buffer) => {
-        const text = chunk.toString();
+        // Strip ANSI escape codes in case terminal formatting or color codes are emitted
+        const text = chunk.toString().replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
         const match = text.match(/https:\/\/playit\.gg\/claim\/([a-zA-Z0-9]+)/);
         if (match && !resolved) {
           resolved = true;

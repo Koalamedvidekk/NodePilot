@@ -25,6 +25,14 @@ export function HostSettingsPage() {
   const [installingTor, setInstallingTor] = useState(false);
   const [resettingTor, setResettingTor] = useState(false);
   const [updatingNodePilot, setUpdatingNodePilot] = useState(false);
+  const [installingPlayit, setInstallingPlayit] = useState(false);
+  const [claimingPlayit, setClaimingPlayit] = useState(false);
+  const [claimUrl, setClaimUrl] = useState<string | null>(null);
+  const [claimCopied, setClaimCopied] = useState(false);
+  const [manualSecretKey, setManualSecretKey] = useState('');
+  const [savingSecretKey, setSavingSecretKey] = useState(false);
+  const [showManualKeyInput, setShowManualKeyInput] = useState(false);
+  const [resettingPlayit, setResettingPlayit] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -111,6 +119,32 @@ export function HostSettingsPage() {
     };
   }, [installingTor, tor?.isInstalling, tor?.isReady, tor?.isRunning]);
 
+  // Auto-detect when the user finishes claiming their agent on playit.gg
+  useEffect(() => {
+    const activeClaim = claimUrl || playit?.claimUrl;
+    if (!activeClaim || playit?.secretExists) return undefined;
+
+    let active = true;
+    const interval = window.setInterval(async () => {
+      try {
+        const next = await api.getPlayitStatus();
+        if (!active) return;
+        if (next.secretExists) {
+          setPlayit(next);
+          setClaimUrl(null);
+          setSuccessMessage('🎉 Playit.gg account successfully linked! Tunnels will now establish automatically.');
+        }
+      } catch {
+        // Silently continue polling
+      }
+    }, 2_500);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [claimUrl, playit?.claimUrl, playit?.secretExists]);
+
   const handleToggleStartup = async () => {
     if (!settings || !startup) return;
     setSaving(true);
@@ -184,13 +218,6 @@ export function HostSettingsPage() {
     }
   };
 
-  const [installingPlayit, setInstallingPlayit] = useState(false);
-  const [claimingPlayit, setClaimingPlayit] = useState(false);
-  const [claimUrl, setClaimUrl] = useState<string | null>(null);
-  const [manualSecretKey, setManualSecretKey] = useState('');
-  const [savingSecretKey, setSavingSecretKey] = useState(false);
-  const [showManualKeyInput, setShowManualKeyInput] = useState(false);
-  const [resettingPlayit, setResettingPlayit] = useState(false);
 
   const handleInstallPlayit = async () => {
     setInstallingPlayit(true);
@@ -211,14 +238,29 @@ export function HostSettingsPage() {
     setClaimingPlayit(true);
     setError(null);
     setSuccessMessage(null);
+
+    // Call window.open synchronously within user click event context to avoid browser popup blockers
+    const preOpenedWindow = window.open('about:blank', '_blank');
+
     try {
       const res = await api.claimPlayitAccount();
       setClaimUrl(res.claimUrl);
       setPlayit(res.playit);
-      setSuccessMessage('Account linking code generated! Open the link below to connect with playit.gg.');
-      // Open in new tab automatically for maximum convenience
-      window.open(res.claimUrl, '_blank', 'noopener,noreferrer');
+      setSuccessMessage('Playit agent connected! Complete linking in your browser tab.');
+
+      if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.location.href = res.claimUrl;
+        preOpenedWindow.focus();
+      } else {
+        const fallback = window.open(res.claimUrl, '_blank', 'noopener,noreferrer');
+        if (!fallback) {
+          setSuccessMessage('Popup blocked by browser. Click the "Open Claim Page" link below to connect.');
+        }
+      }
     } catch (err) {
+      if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.close();
+      }
       setError(err instanceof Error ? err.message : 'Failed to generate claim link.');
     } finally {
       setClaimingPlayit(false);
@@ -896,22 +938,47 @@ export function HostSettingsPage() {
             )}
 
             {(claimUrl || playit?.claimUrl) && !playit?.secretExists && (
-              <div className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
-                <strong style={{ color: 'var(--cyan)' }}>🔗 Complete Account Setup in Browser:</strong>
-                <p>
-                  Your Playit agent is running live on this computer. Click <strong>Open Link</strong> below to claim it on playit.gg. 
-                  Because NodePilot keeps the agent running in real time, playit.gg will detect it as <strong>Online</strong> immediately!
+              <div className="setting-detail-box" style={{ borderColor: 'var(--cyan)', background: 'rgba(56, 189, 248, 0.08)', padding: '16px', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <Icon name="arrowUpRight" size={18} />
+                  <strong style={{ color: 'var(--cyan)', fontSize: '15px' }}>Action Required: Claim Agent on Playit.gg</strong>
+                </div>
+                <p style={{ margin: '0 0 12px 0', lineHeight: 1.5 }}>
+                  Your Playit agent is running live on this computer. Click <strong>Open Claim Page</strong> below to associate it with your account on playit.gg. 
+                  NodePilot will automatically detect when you claim it and activate your tunnels!
                 </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
-                  <code style={{ flex: 1 }}>{claimUrl || playit?.claimUrl}</code>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                   <a
                     href={claimUrl || playit?.claimUrl || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="button button-primary button-small"
+                    className="button button-primary"
+                    style={{ fontWeight: 700 }}
                   >
-                    Open Link
+                    <Icon name="arrowUpRight" size={15} />
+                    <span>Open Claim Page on Playit.gg</span>
                   </a>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={async () => {
+                      const link = claimUrl || playit?.claimUrl;
+                      if (!link) return;
+                      await navigator.clipboard.writeText(link).catch(() => undefined);
+                      setClaimCopied(true);
+                      setTimeout(() => setClaimCopied(false), 2000);
+                    }}
+                  >
+                    <Icon name={claimCopied ? 'check' : 'copy'} size={15} />
+                    <span>{claimCopied ? 'Link Copied!' : 'Copy Link'}</span>
+                  </button>
+                  <code style={{ fontSize: '12px', background: 'rgba(0,0,0,0.3)', padding: '5px 8px', borderRadius: '4px' }}>
+                    {claimUrl || playit?.claimUrl}
+                  </code>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '12.5px', color: 'var(--cyan)' }}>
+                  <span className="button-loader" style={{ width: '14px', height: '14px' }} />
+                  <span>Waiting for you to claim agent on playit.gg… (Auto-detecting)</span>
                 </div>
               </div>
             )}
