@@ -13,7 +13,7 @@ const { chromium } = require(process.env.NODEPILOT_PLAYWRIGHT_MODULE ?? 'playwri
 const dist = fileURLToPath(new URL('../client/dist/', import.meta.url));
 const fixtureServer = createServer((request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname;
-  const target = pathname.startsWith('/assets/')
+  const target = pathname.startsWith('/assets/') || pathname === '/update-recovery.js'
     ? path.resolve(dist, '.' + pathname)
     : path.join(dist, 'index.html');
   if (!target.startsWith(dist) || !existsSync(target)) {

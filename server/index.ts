@@ -408,7 +408,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
   });
 
-  app.get('/api/health', async () => ({ ok: true, timestamp: new Date().toISOString(), version: '0.1.0' }));
+  app.get('/api/health', async () => ({ ok: true, timestamp: new Date().toISOString(), version: updates.getStatus().currentVersion }));
   app.get('/api/system', async () => system.summary());
   app.get('/api/dashboard', async () => ({
     servers: await Promise.all(repository.list().map((server) => serializeServerWithDiskCheck(server, config.serversDirectory))),
@@ -991,7 +991,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const restart = setTimeout(() => {
         void (async () => {
           try {
-            updates.launchPreparedUpdate();
+            await updates.launchPreparedUpdate();
             await app.close();
             options.instanceLock?.release();
             process.exit(0);
@@ -1477,7 +1477,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   if (await clientBuildExists()) {
-    await app.register(fastifyStatic, { root: config.clientDistDirectory });
+    await app.register(fastifyStatic, {
+      root: config.clientDistDirectory,
+      setHeaders(response, filePath) {
+        // An update replaces hashed bundles. Never retain HTML pointing to the
+        // removed bundle names after the application is rebuilt.
+        if (filePath.endsWith('.html') || filePath.endsWith('update-recovery.js')) {
+          response.header('Cache-Control', 'no-store');
+        }
+      },
+    });
     app.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith('/api/')) {
         return reply.code(404).send({ error: 'not_found', message: 'The requested API resource was not found.' });

@@ -8,7 +8,16 @@
     <title>NodePilot</title>
   </head>
   <body>
+    <div id="nodepilot-bootstrap" role="status" style="position:fixed;inset:0;z-index:10000;display:grid;place-content:center;padding:28px;background:#070a12;color:#edf2ff;font:16px system-ui;line-height:1.6">
+      <section style="max-width:620px">
+        <h1>Opening NodePilot…</h1>
+        <p>If this screen remains after an update, run start.bat on Windows or ./start.sh on Linux, then reload the panel.</p>
+        <a href="" style="color:#b5a8ff">Reload NodePilot</a>
+        <noscript><p>Enable JavaScript in this browser to open the panel.</p></noscript>
+      </section>
+    </div>
     <div id="root"></div>
+    <script src="/update-recovery.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

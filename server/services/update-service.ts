@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, readFileSync } from 'node:fs';
-import { access, mkdir, readFile, readdir, rm, stat, statfs, unlink } from 'node:fs/promises';
+import { access, mkdir, open, readFile, readdir, rm, stat, statfs, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -78,6 +78,39 @@ interface ReleaseManifest {
 interface AutoInstallAvailability {
   canAutoInstall: boolean;
   reason: string | null;
+}
+
+/** Wait for the helper's own initialization before allowing the panel to exit. */
+export async function waitForUpdateHelper(child: ChildProcess, readyFile: string, timeoutMs = 10_000): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(deadline);
+      child.off('error', failed);
+      child.off('exit', exited);
+      if (error) reject(error);
+      else resolve();
+    };
+    const failed = (error: Error) => finish(error);
+    const exited = (code: number | null) => finish(new Error('The update helper exited before it was ready (exit ' + code + '). NodePilot was kept running.'));
+    const inspect = async () => {
+      try {
+        const status = JSON.parse(await readFile(readyFile, 'utf8')) as { ready?: boolean; pid?: number };
+        if (status.ready === true && status.pid === child.pid) finish();
+      } catch {
+        // The helper may not yet have created or finished writing its marker.
+      }
+    };
+    const poll = setInterval(() => void inspect(), 100);
+    const deadline = setTimeout(() => finish(new Error('The update helper did not become ready. NodePilot was kept running; inspect .nodepilot/updates/helper.log.')), timeoutMs);
+    child.once('error', failed);
+    child.once('exit', exited);
+    if (child.exitCode !== null) exited(child.exitCode);
+    else void inspect();
+  });
 }
 
 function assetInfo(asset: UpdateAssetCandidate): ReleaseAssetInfo {
@@ -527,7 +560,7 @@ export class UpdateService {
   }
 
   /** Starts the detached helper. The owning Fastify app must close immediately afterwards. */
-  launchPreparedUpdate(): void {
+  async launchPreparedUpdate(): Promise<void> {
     if (!this.preparedUpdate) throw new AppError(409, 'update_not_prepared', 'No verified update is ready to apply.');
     if (this.restartScheduled) return;
 
@@ -549,21 +582,32 @@ export class UpdateService {
       throw new AppError(500, 'updater_missing', 'The verified update helper is missing. Reinstall NodePilot from a verified release.');
     }
     const backupDirectory = path.join(this.updatesDirectory, 'backups', `pre-${this.currentVersion}-${Date.now()}`);
+    const readyFile = path.join(this.updatesDirectory, 'helper-ready-' + crypto.randomUUID() + '.json');
     const args = process.platform === 'win32'
-      ? ['-NoProfile', '-NonInteractive', '-File', helper, '-ParentPid', String(process.pid), '-StagedDir', prepared.sourceDirectory, '-TargetDir', this.projectRoot, '-UpdateRoot', this.updatesDirectory, '-BackupDir', backupDirectory]
-      : [helper, '--parent-pid', String(process.pid), '--staged-dir', prepared.sourceDirectory, '--target-dir', this.projectRoot, '--update-root', this.updatesDirectory, '--backup-dir', backupDirectory];
+      ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-ParentPid', String(process.pid), '-StagedDir', prepared.sourceDirectory, '-TargetDir', this.projectRoot, '-UpdateRoot', this.updatesDirectory, '-BackupDir', backupDirectory, '-ReadyFile', readyFile]
+      : [helper, '--parent-pid', String(process.pid), '--staged-dir', prepared.sourceDirectory, '--target-dir', this.projectRoot, '--update-root', this.updatesDirectory, '--backup-dir', backupDirectory, '--ready-file', readyFile];
     const command = process.platform === 'win32' ? 'powershell.exe' : '/bin/sh';
 
     try {
-      const child = spawn(command, args, { cwd: this.projectRoot, detached: true, stdio: 'ignore', windowsHide: true });
-      child.once('error', (error) => this.markRestartFailed(error));
-      child.unref();
       this.restartScheduled = true;
       this.statusState.status = 'restarting';
-      this.statusState.statusMessage = 'Applying the verified update and restarting NodePilot…';
+      this.statusState.statusMessage = 'Starting the verified update helper…';
+      await mkdir(this.updatesDirectory, { recursive: true });
+      const log = await open(path.join(this.updatesDirectory, 'helper.log'), 'a', 0o600);
+      try {
+        const child = spawn(command, args, { cwd: this.projectRoot, detached: true, stdio: ['ignore', log.fd, log.fd], windowsHide: true });
+        const readiness = waitForUpdateHelper(child, readyFile);
+        child.unref();
+        await readiness;
+        this.statusState.statusMessage = 'Applying the verified update and restarting NodePilot…';
+      } finally {
+        await log.close();
+      }
     } catch (error) {
       this.markRestartFailed(error);
       throw error;
+    } finally {
+      await unlink(readyFile).catch(() => undefined);
     }
   }
 

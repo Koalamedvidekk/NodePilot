@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../api';
+import { beginUpdateRecovery } from '../update-recovery';
 import type { UpdateStatusState } from '../types';
 import { errorMessage, formatDate } from '../utils';
 import { Icon } from './Icon';
@@ -97,6 +98,7 @@ export function UpdateNotification() {
       setInstalling(true);
       const result = await api.installUpdate();
       setUpdate(result.update);
+      beginUpdateRecovery(result.update.availableRelease?.version ?? release.version);
     } catch (error) {
       setInstalling(false);
       setActionError(errorMessage(error));

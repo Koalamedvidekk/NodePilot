@@ -125,10 +125,23 @@ when all of these conditions are met:
 - The archive has no unsafe paths, links, duplicate paths, or unlisted files.
 - No NodePilot-managed game server is running.
 
-The updater stages and builds the release before restarting, keeps the NodePilot
-data directory (worlds, database, and backups) and the environment file untouched,
-and records its result in the updates log inside the data directory. It does not
-force-kill NodePilot if graceful shutdown takes too long.
+The updater verifies and stages the release while the panel is running, confirms
+that its update helper is ready, then stops NodePilot to apply and build the new
+version. It keeps the data directory (worlds, database, and backups) and environment
+files, and relaunches the previous application if installation or building fails.
+It does not force-kill NodePilot if graceful shutdown takes too long.
+
+Keep the browser tab open during an update. A restart screen waits for the requested
+version before reopening the panel. If the panel has not returned after three
+minutes, it offers recovery instructions and a manual check instead of waiting
+indefinitely. On Windows, run `start.bat` again; on Linux, run `./start.sh`.
+The update helper, build output, and relaunch logs are under `.nodepilot/updates/`
+(or `updates/` inside a custom data directory).
+
+If an older updater cannot apply the fix, stop NodePilot and back up `.nodepilot/`
+and your `.env` files. Download the latest universal ZIP from GitHub Releases,
+copy its application contents into the existing installation folder while keeping
+your data and environment files, then run the launcher again.
 
 Git checkouts intentionally do **not** auto-install releases, because an updater
 must never overwrite local source changes. Update a clone with:

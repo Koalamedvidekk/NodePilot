@@ -18,6 +18,7 @@ staged_arg=''
 target_arg=''
 update_root_arg=''
 backup_arg=''
+ready_arg=''
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -26,6 +27,7 @@ while [ "$#" -gt 0 ]; do
     --target-dir) target_arg=${2-}; shift 2 ;;
     --update-root) update_root_arg=${2-}; shift 2 ;;
     --backup-dir) backup_arg=${2-}; shift 2 ;;
+    --ready-file) ready_arg=${2-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -117,6 +119,19 @@ NODE
 
 write_manifest_file_list "$staged" >"$files_tmp" || fail 'The staged update could not be validated.'
 
+if [ -n "$ready_arg" ]; then
+  node --input-type=module - "$ready_arg" "$update_root" "$$" <<'NODE'
+import fs from 'node:fs';
+import path from 'node:path';
+const file = path.resolve(process.argv[2]);
+const root = path.resolve(process.argv[3]);
+if (path.dirname(file) !== root || !/^helper-ready-[A-Za-z0-9-]+\.json$/.test(path.basename(file))) {
+  throw new Error('Invalid updater readiness path.');
+}
+fs.writeFileSync(file, JSON.stringify({ ready: true, pid: Number(process.argv[4]) }), { flag: 'wx', mode: 0o600 });
+NODE
+fi
+
 wait_for_parent() {
   attempts=0
   while kill -0 "$parent_pid" 2>/dev/null; do
@@ -155,8 +170,17 @@ restore_previous_application() {
     done
   fi
   if command -v npm >/dev/null 2>&1; then
-    (cd "$target" && npm ci) || echo '[NodePilot updater] Dependency restoration failed; inspect the backup and log.'
+    (cd "$target" && npm ci --include=dev) || echo '[NodePilot updater] Dependency restoration failed; inspect the backup and log.'
   fi
+}
+
+relaunch_application() {
+  if [ -f "$target/start.sh" ] && command -v bash >/dev/null 2>&1; then
+    nohup bash "$target/start.sh" >>"$update_root/relaunch.log" 2>&1 &
+  else
+    (cd "$target" && nohup npm run start >>"$update_root/relaunch.log" 2>&1 &)
+  fi
+  echo '[NodePilot updater] Relaunch requested; output is in relaunch.log.'
 }
 
 copy_manifest_files() {
@@ -205,15 +229,17 @@ fi
 if ! copy_manifest_files || ! remove_stale_release_files; then
   echo '[NodePilot updater] Copying the verified release failed.'
   restore_previous_application || true
+  relaunch_application
   exit 1
 fi
 
 new_lock_hash=$(node -e "const fs=require('node:fs');const crypto=require('node:crypto');process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$target/package-lock.json")
 if [ "$old_lock_hash" != "$new_lock_hash" ] || [ ! -d "$target/node_modules" ]; then
   echo '[NodePilot updater] Installing dependencies for the new release.'
-  if ! (cd "$target" && npm ci); then
+  if ! (cd "$target" && npm ci --include=dev); then
     echo '[NodePilot updater] Dependency installation failed.'
     restore_previous_application || true
+    relaunch_application
     exit 1
   fi
 fi
@@ -222,19 +248,16 @@ echo '[NodePilot updater] Building NodePilot before restart.'
 if ! (cd "$target" && npm run build); then
   echo '[NodePilot updater] Build failed.'
   restore_previous_application || true
+  relaunch_application
   exit 1
 fi
 if [ ! -f "$target/server/dist/index.js" ] || [ ! -f "$target/client/dist/index.html" ]; then
   echo '[NodePilot updater] Build outputs are missing.'
   restore_previous_application || true
+  relaunch_application
   exit 1
 fi
 
 echo '[NodePilot updater] Update applied successfully; relaunching NodePilot.'
 rm -rf -- "$staged"
-if [ -f "$target/start.sh" ] && command -v bash >/dev/null 2>&1; then
-  nohup bash "$target/start.sh" >/dev/null 2>&1 &
-else
-  (cd "$target" && nohup npm run start >/dev/null 2>&1 &)
-fi
-echo '[NodePilot updater] Relaunch requested.'
+relaunch_application

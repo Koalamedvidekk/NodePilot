@@ -3,6 +3,7 @@ import { api, PANEL_AUTH_CHANGED_EVENT, PANEL_AUTH_REQUIRED_EVENT } from '../api
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
 import { openPlayitClaim } from '../playit-link';
+import { beginUpdateRecovery } from '../update-recovery';
 import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, TorStatus, UpdateStatusState } from '../types';
 
 export function HostSettingsPage() {
@@ -461,6 +462,8 @@ export function HostSettingsPage() {
       const result = await api.installUpdate();
       setUpdateStatus(result.update);
       setSuccessMessage(result.message);
+      const expectedVersion = result.update.availableRelease?.version ?? updateStatus?.availableRelease?.version;
+      if (expectedVersion) beginUpdateRecovery(expectedVersion);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to prepare the NodePilot update.');
       setUpdatingNodePilot(false);

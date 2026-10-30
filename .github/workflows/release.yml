@@ -10,8 +10,22 @@ permissions:
   contents: write
 
 jobs:
+  windows-updater:
+    name: Verify Windows update and recovery
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test Windows updater and process handoff
+        run: npx tsx --test server/test/update-handoff.test.ts server/test/windows-update-helper.test.ts
+
   release:
     name: Test, package, and publish
+    needs: windows-updater
     runs-on: ubuntu-latest
     steps:
       - name: Check out the tagged source

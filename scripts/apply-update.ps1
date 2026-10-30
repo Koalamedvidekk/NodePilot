@@ -16,7 +16,9 @@ param(
     [string]$UpdateRoot,
 
     [Parameter(Mandatory = $true)]
-    [string]$BackupDir
+    [string]$BackupDir,
+
+    [string]$ReadyFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,8 +41,26 @@ function Assert-ChildPath {
     }
 }
 
+function Assert-SafeApplicationPath {
+    param([Parameter(Mandatory = $true)][string]$PathValue)
+    Assert-ChildPath -Child $PathValue -Root $target -Description 'Application destination'
+    # Lexical containment alone does not protect a path through a local junction.
+    $current = $target
+    $relative = $PathValue.Substring($target.TrimEnd('\', '/').Length).TrimStart('\', '/')
+    foreach ($part in $relative.Split([System.IO.Path]::DirectorySeparatorChar)) {
+        if ([string]::IsNullOrWhiteSpace($part)) { continue }
+        $current = Join-Path $current $part
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'An application path contains a symbolic link or junction. The update was refused.'
+            }
+        }
+    }
+}
+
 function Write-UpdateLog {
-    param([Parameter(Mandatory = $true)][string]$Message)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message)
     $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
     Write-Host $line
     Add-Content -LiteralPath $script:LogFile -Value $line -Encoding utf8
@@ -68,7 +88,10 @@ function Test-SafeRelativePath {
 }
 
 function Get-ManifestFiles {
-    param([Parameter(Mandatory = $true)][string]$SourceDirectory)
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDirectory,
+        [switch]$AllowLocalFiles
+    )
     $manifestPath = Join-Path $SourceDirectory 'nodepilot-release.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "Release manifest is missing."
@@ -94,7 +117,7 @@ function Get-ManifestFiles {
         }
         $filePath = Get-AbsolutePath (Join-Path $SourceDirectory ($entry.Replace('/', [System.IO.Path]::DirectorySeparatorChar)))
         Assert-ChildPath -Child $filePath -Root $SourceDirectory -Description 'Manifest file'
-        if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+        if (-not $AllowLocalFiles -and -not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
             throw "Release package is missing $entry."
         }
         $files += $entry
@@ -115,6 +138,10 @@ function Get-ManifestFiles {
         }
     }
 
+    # An installed release also contains generated dist/, tsbuildinfo, and local
+    # configuration. Only the new verified package must match its manifest exactly.
+    if ($AllowLocalFiles) { return $files }
+
     $expected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($file in $files) { [void]$expected.Add($file) }
     foreach ($item in Get-ChildItem -LiteralPath $SourceDirectory -Force -Recurse) {
@@ -134,16 +161,38 @@ function Get-ManifestFiles {
 function Get-FileHashOrEmpty {
     param([Parameter(Mandatory = $true)][string]$PathValue)
     if (-not (Test-Path -LiteralPath $PathValue -PathType Leaf)) { return '' }
-    return (Get-FileHash -LiteralPath $PathValue -Algorithm SHA256).Hash
+    # Use .NET directly: detached Windows PowerShell can inherit a PSModulePath
+    # from PowerShell 7 that does not expose the Get-FileHash cmdlet.
+    $stream = [System.IO.File]::OpenRead($PathValue)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '')
+    } finally {
+        $stream.Dispose()
+        $hasher.Dispose()
+    }
 }
 
 function Invoke-Npm {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if ($null -eq $npm) { $npm = Get-Command npm -ErrorAction Stop }
-    & $npm.Source @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "npm $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    $commandId = [System.Guid]::NewGuid().ToString('N')
+    $stdoutLog = Join-Path $updateRoot ("npm-$commandId.stdout.log")
+    $stderrLog = Join-Path $updateRoot ("npm-$commandId.stderr.log")
+    # Launch npm.cmd through cmd.exe and inspect the actual process exit code.
+    # This also avoids native stderr being treated as a terminating PowerShell error.
+    $commandLine = '/d /s /c ""' + $npm.Source + '" ' + ($Arguments -join ' ') + '"'
+    Write-UpdateLog "Running npm $($Arguments -join ' '). Output: $stdoutLog and $stderrLog."
+    $npmProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList $commandLine -WorkingDirectory $target -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+    $npmExitCode = $npmProcess.ExitCode
+    foreach ($outputFile in @($stdoutLog, $stderrLog)) {
+        if (Test-Path -LiteralPath $outputFile -PathType Leaf) {
+            foreach ($line in Get-Content -LiteralPath $outputFile) { Write-UpdateLog -Message ([string]$line) }
+        }
+    }
+    if ($npmExitCode -ne 0) {
+        throw "npm $($Arguments -join ' ') failed with exit code $npmExitCode."
     }
 }
 
@@ -157,6 +206,7 @@ Assert-ChildPath -Child $staged -Root $stagingRoot -Description 'Staged update'
 Assert-ChildPath -Child $backup -Root $backupRoot -Description 'Backup directory'
 if (-not (Test-Path -LiteralPath $staged -PathType Container)) { throw 'The staged update directory does not exist.' }
 if (-not (Test-Path -LiteralPath (Join-Path $target 'package.json') -PathType Leaf)) { throw 'The target is not a NodePilot installation.' }
+if (((Get-Item -LiteralPath $target -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The installation directory cannot be a symbolic link or junction.' }
 if ($target.Length -lt 4) { throw 'Refusing to update an unsafe target path.' }
 $normalizedUpdateRoot = $updateRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
 if ($target.Equals($updateRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $target.StartsWith($normalizedUpdateRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -166,6 +216,16 @@ if ($target.Equals($updateRoot, [System.StringComparison]::OrdinalIgnoreCase) -o
 New-Item -ItemType Directory -Path $updateRoot -Force | Out-Null
 $script:LogFile = Join-Path $updateRoot 'update.log'
 Write-UpdateLog "Updater started for NodePilot process $ParentPid."
+$newFiles = Get-ManifestFiles -SourceDirectory $staged
+
+if (-not [string]::IsNullOrWhiteSpace($ReadyFile)) {
+    $ready = Get-AbsolutePath $ReadyFile
+    Assert-ChildPath -Child $ready -Root $updateRoot -Description 'Updater readiness file'
+    if (-not ([System.IO.Path]::GetDirectoryName($ready)).Equals($updateRoot.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The updater readiness file must be directly inside update storage.'
+    }
+    [System.IO.File]::WriteAllText($ready, (@{ ready = $true; pid = $PID } | ConvertTo-Json -Compress))
+}
 
 $deadline = [DateTime]::UtcNow.AddSeconds(60)
 while ([DateTime]::UtcNow -lt $deadline) {
@@ -179,7 +239,6 @@ if ($null -ne $parent -and -not $parent.HasExited) {
     exit 1
 }
 
-$newFiles = Get-ManifestFiles -SourceDirectory $staged
 $backupApplication = Join-Path $backup 'application'
 $oldLockHash = Get-FileHashOrEmpty -PathValue (Join-Path $target 'package-lock.json')
 $newLookup = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -189,42 +248,70 @@ function Restore-PreviousApplication {
     Write-UpdateLog 'Restoring the previous application files.'
     foreach ($file in $newFiles) {
         $destination = Get-AbsolutePath (Join-Path $target ($file.Replace('/', [System.IO.Path]::DirectorySeparatorChar)))
-        Assert-ChildPath -Child $destination -Root $target -Description 'Rollback destination'
+        Assert-SafeApplicationPath -PathValue $destination
         Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath (Join-Path $target 'nodepilot-release.json') -Force -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $backupApplication -PathType Container) {
         foreach ($entry in Get-ChildItem -LiteralPath $backupApplication -Force) {
-            $restoreDestination = Join-Path $target $entry.Name
+            if (@('.nodepilot', '.git', 'node_modules', '.env') -contains $entry.Name.ToLowerInvariant()) { continue }
+            $restoreDestination = Get-AbsolutePath (Join-Path $target $entry.Name)
+            Assert-SafeApplicationPath -PathValue $restoreDestination
             Remove-Item -LiteralPath $restoreDestination -Recurse -Force -ErrorAction SilentlyContinue
             Copy-Item -LiteralPath $entry.FullName -Destination $restoreDestination -Recurse -Force
         }
     }
     try {
-        Invoke-Npm -Arguments @('ci')
+        Push-Location $target
+        try { Invoke-Npm -Arguments @('ci', '--include=dev') } finally { Pop-Location }
     } catch {
         Write-UpdateLog "Could not restore dependencies automatically: $($_.Exception.Message)"
     }
 }
 
+function Start-NodePilot {
+    $launcher = Join-Path $target 'start.bat'
+    $stdoutLog = Join-Path $updateRoot 'restart.stdout.log'
+    $stderrLog = Join-Path $updateRoot 'restart.stderr.log'
+    if (Test-Path -LiteralPath $launcher -PathType Leaf) {
+        Start-Process -FilePath 'cmd.exe' -ArgumentList ('/d /c "' + $launcher + '"') -WorkingDirectory $target -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+    } else {
+        $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+        if ($null -eq $npm) { $npm = Get-Command npm -ErrorAction Stop }
+        Start-Process -FilePath $npm.Source -ArgumentList 'start' -WorkingDirectory $target -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+    }
+    Write-UpdateLog "Relaunch requested. Startup output is in $stdoutLog and $stderrLog."
+}
+
+$installationChanged = $false
+
 try {
     New-Item -ItemType Directory -Path $backupApplication -Force | Out-Null
     foreach ($entry in Get-ChildItem -LiteralPath $target -Force) {
         if (@('.nodepilot', '.git', 'node_modules', '.env') -contains $entry.Name.ToLowerInvariant()) { continue }
+        Assert-SafeApplicationPath -PathValue $entry.FullName
+        if ($entry.PSIsContainer) {
+            foreach ($nested in Get-ChildItem -LiteralPath $entry.FullName -Force -Recurse) {
+                if (($nested.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    throw 'Application backup contains a symbolic link or junction. The update was refused.'
+                }
+            }
+        }
         Copy-Item -LiteralPath $entry.FullName -Destination (Join-Path $backupApplication $entry.Name) -Recurse -Force
     }
 
     $oldManifestFiles = @()
     if (Test-Path -LiteralPath (Join-Path $backupApplication 'nodepilot-release.json') -PathType Leaf) {
-        $oldManifestFiles = Get-ManifestFiles -SourceDirectory $backupApplication
+        $oldManifestFiles = Get-ManifestFiles -SourceDirectory $backupApplication -AllowLocalFiles
     }
 
     Write-UpdateLog 'Copying verified release files into the installation.'
+    $installationChanged = $true
     foreach ($file in $newFiles) {
         $source = Get-AbsolutePath (Join-Path $staged ($file.Replace('/', [System.IO.Path]::DirectorySeparatorChar)))
         $destination = Get-AbsolutePath (Join-Path $target ($file.Replace('/', [System.IO.Path]::DirectorySeparatorChar)))
         Assert-ChildPath -Child $source -Root $staged -Description 'Staged source'
-        Assert-ChildPath -Child $destination -Root $target -Description 'Update destination'
+        Assert-SafeApplicationPath -PathValue $destination
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination -Force
     }
@@ -233,7 +320,7 @@ try {
     foreach ($file in $oldManifestFiles) {
         if ($newLookup.Contains($file)) { continue }
         $destination = Get-AbsolutePath (Join-Path $target ($file.Replace('/', [System.IO.Path]::DirectorySeparatorChar)))
-        Assert-ChildPath -Child $destination -Root $target -Description 'Stale release file'
+        Assert-SafeApplicationPath -PathValue $destination
         Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
     }
 
@@ -241,7 +328,7 @@ try {
     if ($oldLockHash -ne $newLockHash -or -not (Test-Path -LiteralPath (Join-Path $target 'node_modules') -PathType Container)) {
         Write-UpdateLog 'Installing dependencies required by the new release.'
         Push-Location $target
-        try { Invoke-Npm -Arguments @('ci') } finally { Pop-Location }
+        try { Invoke-Npm -Arguments @('ci', '--include=dev') } finally { Pop-Location }
     }
 
     Write-UpdateLog 'Building NodePilot before restart.'
@@ -255,18 +342,16 @@ try {
     }
 } catch {
     Write-UpdateLog "Update failed: $($_.Exception.Message)"
-    try { Restore-PreviousApplication } catch { Write-UpdateLog "Rollback failed: $($_.Exception.Message)" }
+    try {
+        if ($installationChanged) { Restore-PreviousApplication }
+        Write-UpdateLog 'Restarting the previous NodePilot installation after the failed update.'
+        Start-NodePilot
+    } catch {
+        Write-UpdateLog "Recovery failed: $($_.Exception.Message). Start NodePilot manually from $target."
+    }
     exit 1
 }
 
 Write-UpdateLog 'Update applied successfully. Cleaning staged files and relaunching NodePilot.'
 Remove-Item -LiteralPath $staged -Recurse -Force -ErrorAction SilentlyContinue
-$launcher = Join-Path $target 'start.bat'
-if (Test-Path -LiteralPath $launcher -PathType Leaf) {
-    Start-Process -FilePath 'cmd.exe' -ArgumentList ('/d /c "' + $launcher + '"') -WorkingDirectory $target -WindowStyle Hidden
-} else {
-    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if ($null -eq $npm) { $npm = Get-Command npm -ErrorAction Stop }
-    Start-Process -FilePath $npm.Source -ArgumentList 'start' -WorkingDirectory $target -WindowStyle Hidden
-}
-Write-UpdateLog 'Relaunch requested.'
+Start-NodePilot
