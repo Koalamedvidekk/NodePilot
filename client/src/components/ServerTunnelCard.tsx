@@ -3,6 +3,7 @@ import { api } from '../api';
 import { Icon } from './Icon';
 import type { PlayitStatus, Server, ServerTunnel } from '../types';
 import { errorMessage } from '../utils';
+import { openPlayitClaim } from '../playit-link';
 
 export function ServerTunnelCard({ server }: { server: Server }) {
   const [tunnel, setTunnel] = useState<ServerTunnel | null>(null);
@@ -87,28 +88,13 @@ export function ServerTunnelCard({ server }: { server: Server }) {
     setError(undefined);
     setSuccess(undefined);
 
-    // Call window.open synchronously within user click event context to avoid browser popup blockers
-    const preOpenedWindow = window.open('about:blank', '_blank');
-
     try {
       const res = await api.claimPlayitAccount();
       setClaimUrl(res.claimUrl);
       setPlayit(res.playit);
-      setSuccess('Playit agent connected! Complete linking in your browser tab.');
-
-      if (preOpenedWindow && !preOpenedWindow.closed) {
-        preOpenedWindow.location.href = res.claimUrl;
-        preOpenedWindow.focus();
-      } else {
-        const fallback = window.open(res.claimUrl, '_blank', 'noopener,noreferrer');
-        if (!fallback) {
-          setSuccess('Popup blocked by browser. Click "Open Claim Page" below to connect.');
-        }
-      }
+      setSuccess('Opening Playit to finish linking. Return to NodePilot afterwards.');
+      openPlayitClaim(res.claimUrl);
     } catch (cause) {
-      if (preOpenedWindow && !preOpenedWindow.closed) {
-        preOpenedWindow.close();
-      }
       setError(errorMessage(cause));
     } finally {
       setClaimingPlayit(false);
@@ -325,7 +311,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
               </div>
             )}
           </div>
-        ) : !playit?.secretExists ? (
+        ) : !playit?.secretExists || Boolean(claimUrl) ? (
           <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.35)', background: 'rgba(56, 189, 248, 0.08)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Icon name="wifi" size={18} />
@@ -333,6 +319,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
             </div>
             <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.5 }}>
               Your Playit agent is not linked to an account yet. Link this computer with 1 click so Playit can assign a public address to your server.
+              {' '}Playit will open in this tab; return to NodePilot after approving the agent.
             </p>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
               <button
@@ -348,8 +335,6 @@ export function ServerTunnelCard({ server }: { server: Server }) {
                 <>
                   <a
                     href={claimUrl || playit?.claimUrl || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     className="button button-secondary"
                   >
                     <Icon name="arrowUpRight" size={15} />

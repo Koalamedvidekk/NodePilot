@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, PANEL_AUTH_CHANGED_EVENT, PANEL_AUTH_REQUIRED_EVENT } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
+import { openPlayitClaim } from '../playit-link';
 import type { HostDiagnostics, HostSettings, HostStartupStatus, PlayitStatus, Server, TorStatus, UpdateStatusState } from '../types';
 
 export function HostSettingsPage() {
@@ -27,6 +28,7 @@ export function HostSettingsPage() {
   const [updatingNodePilot, setUpdatingNodePilot] = useState(false);
   const [installingPlayit, setInstallingPlayit] = useState(false);
   const [claimingPlayit, setClaimingPlayit] = useState(false);
+  const [playitClaimError, setPlayitClaimError] = useState<string | null>(null);
   const [claimUrl, setClaimUrl] = useState<string | null>(null);
   const [claimCopied, setClaimCopied] = useState(false);
   const [manualSecretKey, setManualSecretKey] = useState('');
@@ -236,32 +238,20 @@ export function HostSettingsPage() {
 
   const handleClaimPlayit = async () => {
     setClaimingPlayit(true);
+    setPlayitClaimError(null);
     setError(null);
     setSuccessMessage(null);
-
-    // Call window.open synchronously within user click event context to avoid browser popup blockers
-    const preOpenedWindow = window.open('about:blank', '_blank');
 
     try {
       const res = await api.claimPlayitAccount();
       setClaimUrl(res.claimUrl);
       setPlayit(res.playit);
-      setSuccessMessage('Playit agent connected! Complete linking in your browser tab.');
-
-      if (preOpenedWindow && !preOpenedWindow.closed) {
-        preOpenedWindow.location.href = res.claimUrl;
-        preOpenedWindow.focus();
-      } else {
-        const fallback = window.open(res.claimUrl, '_blank', 'noopener,noreferrer');
-        if (!fallback) {
-          setSuccessMessage('Popup blocked by browser. Click the "Open Claim Page" link below to connect.');
-        }
-      }
+      setSuccessMessage('Opening Playit to finish linking. Return to NodePilot afterwards.');
+      openPlayitClaim(res.claimUrl);
     } catch (err) {
-      if (preOpenedWindow && !preOpenedWindow.closed) {
-        preOpenedWindow.close();
-      }
-      setError(err instanceof Error ? err.message : 'Failed to generate claim link.');
+      const message = err instanceof Error ? err.message : 'Failed to generate claim link.';
+      setError(message);
+      setPlayitClaimError(message);
     } finally {
       setClaimingPlayit(false);
     }
@@ -872,6 +862,7 @@ export function HostSettingsPage() {
                       ? 'Your Playit credentials are configured. Tunnels will automatically launch and link with your servers.'
                       : 'Link this computer to your playit.gg account with 1 click. If playit.gg says you hit the agent limit (2 on free tier), delete any old unused agent on playit.gg first.'}
                   </p>
+                  <small className="setting-explanation">Linking opens Playit in this tab. After approving the agent, return to NodePilot.</small>
                 </div>
                 <div className="setting-action" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button
@@ -908,6 +899,13 @@ export function HostSettingsPage() {
               </div>
             )}
 
+            {playitClaimError && (
+              <div className="notice-banner is-error" role="alert">
+                <Icon name="warning" size={18} />
+                <span>{playitClaimError}</span>
+              </div>
+            )}
+
             {showManualKeyInput && (
               <form onSubmit={(e) => void handleSaveSecretKey(e)} className="setting-detail-box" style={{ borderColor: 'var(--cyan)' }}>
                 <strong style={{ color: 'var(--cyan)' }}>🔑 Enter Secret Key Manually:</strong>
@@ -937,7 +935,7 @@ export function HostSettingsPage() {
               </form>
             )}
 
-            {(claimUrl || playit?.claimUrl) && !playit?.secretExists && (
+            {(claimUrl || (!playit?.secretExists && playit?.claimUrl)) && (
               <div className="setting-detail-box" style={{ borderColor: 'var(--cyan)', background: 'rgba(56, 189, 248, 0.08)', padding: '16px', borderRadius: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                   <Icon name="arrowUpRight" size={18} />
@@ -950,8 +948,6 @@ export function HostSettingsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                   <a
                     href={claimUrl || playit?.claimUrl || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     className="button button-primary"
                     style={{ fontWeight: 700 }}
                   >

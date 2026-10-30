@@ -1078,7 +1078,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/playit/claim', async () => {
-    const claimResult = await playit.claimAccount();
+    let claimResult: Awaited<ReturnType<PlayitService['claimAccount']>>;
+    try {
+      claimResult = await playit.claimAccount();
+    } catch (error) {
+      throw new AppError(502, 'playit_claim_failed', 'Could not open Playit account linking: ' + errorMessage(error));
+    }
     autoStart.log('info', `Generated Playit account linking link: ${claimResult.claimUrl}`);
     return {
       ok: true,
