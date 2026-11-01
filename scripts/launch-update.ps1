@@ -17,7 +17,10 @@ $values = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Ar
 if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'The verified updater script is missing.' }
 if ($values -isnot [System.Array] -or $values.Count -lt 2 -or $values.Count % 2 -ne 0 -or @($values | Where-Object { $_ -isnot [string] }).Count -gt 0) { throw 'Updater arguments are invalid.' }
 $readyIndex = [Array]::IndexOf($values, '-ReadyFile')
-if ($readyIndex -lt 0 -or $readyIndex + 1 -ge $values.Count -or $values[$readyIndex + 1] -ne $childReady) { throw 'The updater readiness argument is invalid.' }
+if ($readyIndex -lt 0 -or $readyIndex + 1 -ge $values.Count) { throw 'The updater readiness argument is invalid.' }
+$providedChildReady = [System.IO.Path]::GetFullPath([string]$values[$readyIndex + 1])
+if (-not $providedChildReady.Equals($childReady, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'The updater readiness argument is invalid.' }
+$values[$readyIndex + 1] = $providedChildReady
 
 # Only literal arguments enter the encoded script. A path containing apostrophes,
 # spaces, dollar signs or shell punctuation remains a single literal value.

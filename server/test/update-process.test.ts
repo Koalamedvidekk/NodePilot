@@ -8,9 +8,9 @@ import test from 'node:test';
 import { spawnUpdateHelper } from '../lib/update-process.js';
 import { waitForUpdateHelper } from '../services/update-service.js';
 
-test('Windows PowerShell updater executes, confirms readiness and survives its Node parent exiting', { skip: process.platform !== 'win32' }, async () => {
+test('Windows PowerShell updater normalizes readiness paths and survives its Node parent exiting', { skip: process.platform !== 'win32' }, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-update-process-'));
-  const ready = path.join(temporary, 'ready.json');
+  const ready = temporary + path.sep + '.' + path.sep + 'ready.json';
   const finished = path.join(temporary, "finished ' literal & $(noop).txt");
   const script = path.join(temporary, "helper with 'quotes' & $(literal).ps1");
   const log = path.join(temporary, 'helper.log');
