@@ -27,6 +27,8 @@ export function HostSettingsPage() {
   const [installingTor, setInstallingTor] = useState(false);
   const [resettingTor, setResettingTor] = useState(false);
   const [updatingNodePilot, setUpdatingNodePilot] = useState(false);
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   const [installingPlayit, setInstallingPlayit] = useState(false);
   const [claimingPlayit, setClaimingPlayit] = useState(false);
   const [playitClaimError, setPlayitClaimError] = useState<string | null>(null);
@@ -86,6 +88,7 @@ export function HostSettingsPage() {
         setUpdateStatus(next);
         if (next.status === 'error') {
           setError(next.checkError ?? next.error ?? next.statusMessage ?? 'NodePilot update failed.');
+          setInstallingUpdate(false);
           setUpdatingNodePilot(false);
         }
       } catch {
@@ -393,6 +396,7 @@ export function HostSettingsPage() {
   };
 
   const handleCheckForUpdates = async () => {
+    setCheckingForUpdates(true);
     setUpdatingNodePilot(true);
     setError(null);
     setSuccessMessage(null);
@@ -408,6 +412,7 @@ export function HostSettingsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to check for NodePilot updates.');
     } finally {
+      setCheckingForUpdates(false);
       setUpdatingNodePilot(false);
     }
   };
@@ -456,6 +461,7 @@ export function HostSettingsPage() {
     }
     if (!window.confirm('NodePilot will build the verified release and restart. Continue?')) return;
 
+    setInstallingUpdate(true);
     setUpdatingNodePilot(true);
     setError(null);
     try {
@@ -466,9 +472,27 @@ export function HostSettingsPage() {
       if (expectedVersion) beginUpdateRecovery(expectedVersion);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to prepare the NodePilot update.');
+      setInstallingUpdate(false);
       setUpdatingNodePilot(false);
     }
   };
+
+  const checkingUpdate = checkingForUpdates || updateStatus?.status === 'checking';
+  const preparingUpdate = installingUpdate || ['downloading', 'verifying', 'extracting', 'backing_up', 'installing', 'ready_to_restart', 'restarting'].includes(updateStatus?.status ?? '');
+  const updateActionsBusy = updatingNodePilot || checkingUpdate || preparingUpdate;
+  const installUpdateLabel = updateStatus?.status === 'restarting'
+    ? 'Restarting…'
+    : preparingUpdate
+      ? 'Preparing Update…'
+      : checkingUpdate
+        ? 'Checking…'
+        : updateStatus?.isUpdateAvailable
+          ? 'Install & Restart'
+          : !updateStatus || updateStatus.checkError || updateStatus.error || updateStatus.status === 'error'
+            ? 'Install & Restart'
+            : updateStatus.lastCheckedAt
+              ? 'Up to date'
+              : 'Check for updates first';
 
   if (loading) {
     return (
@@ -1079,22 +1103,33 @@ export function HostSettingsPage() {
                 type="button"
                 className="button button-secondary"
                 onClick={() => void handleCheckForUpdates()}
-                disabled={updatingNodePilot || updateStatus?.status === 'restarting'}
+                disabled={updateActionsBusy}
               >
                 <Icon name="refresh" size={16} />
                 <span>{updateStatus?.status === 'checking' ? 'Checking…' : 'Check for Updates'}</span>
               </button>
 
-              {updateStatus?.isUpdateAvailable && updateStatus.canAutoInstall && (
-                <button
-                  type="button"
-                  className="button button-primary"
-                  onClick={() => void handleInstallUpdate()}
-                  disabled={updatingNodePilot}
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void handleInstallUpdate()}
+                disabled={!updateStatus?.isUpdateAvailable || !updateStatus.canAutoInstall || updateActionsBusy}
+                aria-describedby={updateStatus?.autoInstallReason ? 'nodepilot-install-update-reason' : undefined}
+              >
+                <Icon name="download" size={16} />
+                <span>{installUpdateLabel}</span>
+              </button>
+
+              {updateStatus?.isUpdateAvailable && !updateStatus.canAutoInstall && updateStatus.availableRelease && (
+                <a
+                  href={updateStatus.availableRelease.htmlUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="button button-secondary"
                 >
                   <Icon name="download" size={16} />
-                  <span>{updatingNodePilot ? 'Preparing Update…' : 'Install & Restart'}</span>
-                </button>
+                  Open download page
+                </a>
               )}
 
               {updateStatus?.isUpdateAvailable && (
@@ -1102,12 +1137,19 @@ export function HostSettingsPage() {
                   type="button"
                   className="button button-ghost"
                   onClick={() => void handleDismissUpdate()}
-                  disabled={updatingNodePilot}
+                  disabled={updateActionsBusy}
                 >
                   Dismiss this version
                 </button>
               )}
             </div>
+
+            {updateStatus?.autoInstallReason && (
+              <div className="setting-notice-banner" id="nodepilot-install-update-reason">
+                <Icon name="warning" size={16} />
+                <span>{updateStatus.autoInstallReason}</span>
+              </div>
+            )}
 
             {updateStatus?.statusMessage && (
               <p className="update-status-message" aria-live="polite">{updateStatus.statusMessage}</p>
@@ -1165,13 +1207,6 @@ export function HostSettingsPage() {
                     <ul>{updateStatus.availableRelease.changelog.bugFixes.slice(0, 5).map((note) => <li key={note}>{note}</li>)}</ul>
                   </div>
                 )}
-              </div>
-            )}
-
-            {updateStatus?.autoInstallReason && (
-              <div className="setting-notice-banner">
-                <Icon name="warning" size={16} />
-                <span>{updateStatus.autoInstallReason}</span>
               </div>
             )}
 
