@@ -124,8 +124,10 @@ function cleanLine(line: string): string {
  */
 export class ServerRuntime extends EventEmitter {
   private readonly processes = new Map<string, RuntimeProcess>();
+  private readonly starting = new Set<string>();
   private readonly logs = new Map<string, ConsoleLine[]>();
   private startGuard?: (serverId: string) => void;
+  private startValidation?: (serverId: string) => Promise<void>;
 
   constructor(
     private readonly repository: ServerRepository,
@@ -142,6 +144,10 @@ export class ServerRuntime extends EventEmitter {
 
   setStartGuard(guard: (serverId: string) => void): void {
     this.startGuard = guard;
+  }
+
+  setStartValidation(validate: (serverId: string) => Promise<void>): void {
+    this.startValidation = validate;
   }
 
   private assertStartAllowed(server: ServerRecord): void {
@@ -173,10 +179,22 @@ export class ServerRuntime extends EventEmitter {
   }
 
   isProcessActive(serverId: string): boolean {
-    return this.processes.has(serverId);
+    return this.processes.has(serverId) || this.starting.has(serverId);
   }
 
   async start(server: ServerRecord, javaPath?: string, warning?: string): Promise<ServerRecord> {
+    if (this.starting.has(server.id)) throw new AppError(409, 'server_already_active', 'This server is already starting.');
+    this.assertStartAllowed(server);
+    this.starting.add(server.id);
+    try {
+      await this.startValidation?.(server.id);
+      return await this.startInternal(server, javaPath, warning);
+    } finally {
+      this.starting.delete(server.id);
+    }
+  }
+
+  private async startInternal(server: ServerRecord, javaPath?: string, warning?: string): Promise<ServerRecord> {
     this.assertStartAllowed(server);
     if (server.installState !== 'ready') {
       throw new AppError(409, 'server_not_ready', 'This server is still installing or its installation failed.');

@@ -27,6 +27,9 @@ import { HostSettingsRepository } from './repositories/host-settings-repository.
 import { ServerTunnelRepository } from './repositories/server-tunnel-repository.js';
 import { ServerSettingsRepository } from './repositories/server-settings-repository.js';
 import { ServerVersionRepository } from './repositories/server-version-repository.js';
+import { WorldRepository } from './repositories/world-repository.js';
+import { WorldService } from './services/world-service.js';
+import { registerWorldRoutes } from './routes/world-routes.js';
 import { FileService } from './services/file-service.js';
 import { JavaService } from './services/java-service.js';
 import { ImportService } from './services/import-service.js';
@@ -72,7 +75,11 @@ const updateServerSchema = z.object({
   memoryMb: z.number().int().min(256).max(65_536).optional(),
   javaPath: z.string().min(1).max(1_024).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, 'Supply at least one value to update.');
-const propertiesSchema = z.object({ values: z.record(z.string(), z.string().max(512)) });
+const propertiesSchema = z.object({ values: z.record(z.string(), z.string().max(16_384)) }).superRefine(({ values }, context) => {
+  for (const [key, value] of Object.entries(values)) if (key !== 'generator-settings' && value.length > 512) {
+    context.addIssue({ code: 'custom', path: ['values', key], message: 'Property values are limited to 512 characters.' });
+  }
+});
 const fileContentSchema = z.object({
   path: z.string().min(1).max(512),
   content: z.string().max(1_000_000),
@@ -358,18 +365,25 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const java = new JavaService(config.dataDirectory);
   const runtime = new ServerRuntime(repository, config.serversDirectory, settingsRepository);
   const serverMutationCounts = new Map<string, number>();
+  let worlds: WorldService;
   const versionSettings = new ServerVersionRepository(database);
   const serverVersions = new ServerVersionService(
     { serversDirectory: config.serversDirectory, backupsDirectory: config.backupsDirectory },
     repository, minecraft, java,
-    { isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 },
+    { isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) },
     versionSettings,
-    () => updates.isRestartScheduled(),
+    () => updates.isMaintenanceActive(),
   );
+  worlds = new WorldService(config, repository, new WorldRepository(database), {
+    isProcessActive: (id) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || serverVersions.isBusy(id),
+  }, () => updates.isMaintenanceActive());
+  await worlds.recover();
   runtime.setStartGuard((id) => {
-    if (updates.isRestartScheduled()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
+    if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
     if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
+    worlds.assertCanStart(id);
   });
+  runtime.setStartValidation((id) => worlds.validateStart(id));
   const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
   const files = new FileService(config.serversDirectory);
@@ -389,8 +403,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook('preHandler', async (request) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
     const match = request.url.split('?')[0].match(/^\/api\/servers\/([0-9a-f-]{36})(\/.*)?$/i);
-    if (!match || match[2]?.startsWith('/versions')) return;
+    if (!match) return;
     const id = match[1];
+    if (match[2]?.startsWith('/worlds')) return;
+    if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
+    worlds.assertCanStart(id);
+    if (match[2]?.startsWith('/versions')) return;
     if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
     serverMutationCounts.set(id, (serverMutationCounts.get(id) ?? 0) + 1);
     mutationRequests.set(request, id);
@@ -446,6 +464,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.get('/api/health', async () => ({ ok: true, timestamp: new Date().toISOString(), version: updates.getStatus().currentVersion }));
+  await registerWorldRoutes(app, worlds, { dataDirectory: config.dataDirectory });
   app.get('/api/system', async () => system.summary());
   app.get('/api/dashboard', async () => ({
     servers: await Promise.all(repository.list().map((server) => serializeServerWithDiskCheck(server, config.serversDirectory))),
@@ -1043,6 +1062,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/updates/install', async (_request, reply) => {
+    if (worlds.anyBusy()) throw new AppError(409, 'world_operation_in_progress', 'Wait for world operations to finish before updating NodePilot.');
     if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
     if (!options.isPrimaryInstance || !options.instanceLock) {
       throw new AppError(409, 'update_not_primary_instance', 'Only the primary NodePilot instance may apply an update.');
@@ -1055,6 +1075,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const restart = setTimeout(() => {
         void (async () => {
           try {
+            if (worlds.anyBusy()) throw new AppError(409, 'world_operation_in_progress', 'Wait for world operations to finish before updating NodePilot.');
             if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
             await updates.launchPreparedUpdate();
             await app.close();
@@ -1589,6 +1610,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook('onClose', async () => {
     updates.stop();
     await serverVersions.stop();
+    await worlds.stop();
     autoSleep.stop();
     wakeProxy.stop();
     await tor.stop();

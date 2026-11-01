@@ -24,6 +24,8 @@ mandatory telemetry required.
 - Changes a stopped server's Minecraft version in its Versions tab, with a complete
   backup first. Optional automatic updates check for stable releases hourly and
   install only while the server is stopped.
+- Keeps a library of Java worlds in the Worlds tab, with preparation, selection,
+  saved game rules, datapacks, ZIP transfers, and complete world backups.
 - Streams process output through a WebSocket console and accepts console commands.
 - Provides a Usage tab with managed-process CPU, RSS, Java heap where `jcmd` is available,
   process I/O, managed-directory size, uptime, and bounded rolling charts. It never shows
@@ -176,6 +178,21 @@ If the Versions page reports that its API is missing after a source update, stop
 your game servers and restart NodePilot. Run `npm run build` before relaunching
 when building manually; the Windows and Linux launchers build both application
 parts through `npm start`. Refresh the browser after startup.
+
+## Managing worlds
+
+Open a Java server and choose **Worlds**. Stop the server before making changes,
+backups, or ZIP downloads. Existing worlds appear without being moved.
+
+Choose **Prepare new world**, name it, and set its seed and generation options.
+**Prepare world** saves and selects it; start the server normally to generate it.
+Your previous world stays in **Saved worlds**. Choose another entry and **Use on
+next start** to return to it, including its player inventories, XP, and locations.
+
+The tab also offers saved settings and game rules, separate datapack controls,
+world ZIP inspection/import, downloads, and backup/restore. Bedrock and ambiguous
+Java layouts show an availability explanation. Plugin and mod data stored outside
+world folders stays server-wide. See the [Worlds guide](docs/worlds.md) for details.
 
 ## Configuration and data
 

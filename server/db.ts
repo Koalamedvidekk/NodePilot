@@ -144,5 +144,24 @@ export function openDatabase(databasePath: string): SqliteDatabase {
     );
   `);
 
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS worlds (
+      id TEXT PRIMARY KEY, server_id TEXT NOT NULL, folder TEXT NOT NULL,
+      payload TEXT NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(server_id,folder), FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS world_backups (
+      id TEXT PRIMARY KEY, world_id TEXT NOT NULL, server_id TEXT NOT NULL,
+      payload TEXT NOT NULL, created_at TEXT NOT NULL,
+      FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS world_operations (
+      id TEXT PRIMARY KEY, server_id TEXT NOT NULL, state TEXT NOT NULL,
+      payload TEXT NOT NULL, created_at TEXT NOT NULL,
+      FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS world_operations_server_idx ON world_operations(server_id,state);
+  `);
+
   return database;
 }

@@ -7,13 +7,14 @@ import { PropertiesPanel } from './PropertiesPanel';
 import { UsagePanel } from './UsagePanel';
 import { ServerSettingsPanel } from './ServerSettingsPanel';
 import { VersionsPanel } from './VersionsPanel';
+import { WorldsPanel } from './WorldsPanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServerTunnelCard } from '../components/ServerTunnelCard';
 import type { ConsoleLine, FileEntry, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
-type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'versions' | 'properties' | 'files' | 'settings';
+type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'versions' | 'worlds' | 'properties' | 'files' | 'settings';
 
 export type AddonCategory = 'plugins' | 'mods' | null;
 
@@ -30,6 +31,7 @@ function tabFromPath(pathname: string): ManagementTab {
   if (pathname.endsWith('/console')) return 'console';
   if (pathname.endsWith('/players')) return 'players';
   if (pathname.endsWith('/versions')) return 'versions';
+  if (pathname.endsWith('/worlds')) return 'worlds';
   if (pathname.endsWith('/addons') || pathname.endsWith('/plugins') || pathname.endsWith('/mods')) return 'addons';
   if (pathname.endsWith('/properties')) return 'properties';
   if (pathname.endsWith('/files')) return 'files';
@@ -830,6 +832,7 @@ export function ServerManagementPage() {
     { tab: 'players', label: 'Players', icon: 'users', to: `${base}/players` },
     ...(addonTab ? [addonTab] : []),
     { tab: 'versions', label: 'Versions', icon: 'refresh', to: `${base}/versions` },
+    { tab: 'worlds', label: 'Worlds', icon: 'box', to: `${base}/worlds` },
     { tab: 'properties', label: 'Properties', icon: 'sliders', to: `${base}/properties` },
     { tab: 'files', label: 'Files', icon: 'files', to: `${base}/files` },
     { tab: 'settings', label: 'Settings', icon: 'settings', to: `${base}/settings` },
@@ -863,6 +866,7 @@ export function ServerManagementPage() {
       {tab === 'console' && <ConsolePanel server={server} />}
       {tab === 'players' && <PlayersPanel server={server} />}
       {tab === 'versions' && <VersionsPanel key={server.id} server={server} onServerUpdated={applyVersionServerUpdate} />}
+      {tab === 'worlds' && <WorldsPanel key={server.id} server={server} />}
       {tab === 'addons' && (
         addonCategory ? (
           <AddonsPanel server={server} />

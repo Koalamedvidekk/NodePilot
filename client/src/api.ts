@@ -88,7 +88,7 @@ function endpoint(path: string): string {
   return `${API_ROOT}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const pin = getStoredPin();
   const response = await fetch(endpoint(path), {
     ...init,

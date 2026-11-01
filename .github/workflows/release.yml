@@ -24,10 +24,13 @@ jobs:
         run: npx tsx --test server/test/update-handoff.test.ts server/test/windows-update-helper.test.ts
       - name: Test Minecraft version changes on Windows
         run: npx tsx --test server/test/server-version-service.test.ts server/test/version-runtime-integration.test.ts
-      - name: Build and verify the Versions API
+      - name: Test Worlds layouts, transfers and recovery on Windows
+        run: npx tsx --test server/test/world-foundation.test.ts server/test/world-transfers-packs.test.ts server/test/world-routes.test.ts server/test/world-overlap.test.ts server/test/world-restore-transition.test.ts
+      - name: Build and verify the Versions and Worlds APIs
         run: |
           npm run build -w server
           node scripts/test-versions-api.mjs
+          node scripts/test-worlds-api.mjs
 
   release:
     name: Test, package, and publish
@@ -66,6 +69,9 @@ jobs:
 
       - name: Verify the compiled Versions API
         run: node scripts/test-versions-api.mjs
+
+      - name: Verify the compiled Worlds API and ZIP round trip
+        run: node scripts/test-worlds-api.mjs
 
       - name: Create the verified updater package
         id: package

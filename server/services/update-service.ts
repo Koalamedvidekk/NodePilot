@@ -338,6 +338,10 @@ export class UpdateService {
     return this.restartScheduled;
   }
 
+  isMaintenanceActive(): boolean {
+    return this.isInstalling || this.restartScheduled;
+  }
+
   dismissAvailableRelease(): void {
     const release = this.statusState.availableRelease;
     if (!release || !this.statusState.isUpdateAvailable) {

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { AppError } from '../lib/errors.js';
 import { isInside, isRegularFile, resolveInside, resolveManagedServerRoot } from '../lib/paths.js';
+import { parseJavaProperties, patchJavaProperties } from '../lib/java-properties.js';
 import type { FileEntry, ServerRecord } from '../types.js';
 
 const MAX_TEXT_BYTES = 1_000_000;
@@ -285,33 +286,26 @@ export class FileService {
     if (!(await isRegularFile(filePath))) throw new AppError(400, 'not_a_file', 'server.properties is not a regular file.');
     const content = await readFile(filePath, 'utf8');
     assertText(content);
-    const values: Record<string, string> = {};
-    for (const rawLine of content.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#')) continue;
-      const splitAt = line.indexOf('=');
-      if (splitAt < 1) continue;
-      values[line.slice(0, splitAt).trim()] = line.slice(splitAt + 1);
-    }
-    return values;
+    return parseJavaProperties(content);
   }
 
   async saveProperties(server: ServerRecord, values: Record<string, string>): Promise<Record<string, string>> {
     const pairs = Object.entries(values);
     if (pairs.length > 200) throw new AppError(400, 'too_many_properties', 'A server properties file may contain at most 200 values.');
     for (const [key, value] of pairs) {
-      if (!/^[A-Za-z0-9_.-]{1,64}$/.test(key) || typeof value !== 'string' || value.length > 512 || /[\r\n\0]/.test(value)) {
+      const maximum = key === 'generator-settings' ? 16_384 : 512;
+      if (!/^[A-Za-z0-9_.-]{1,64}$/.test(key) || typeof value !== 'string' || value.length > maximum || value.includes('\0')) {
         throw new AppError(400, 'invalid_property', 'Property names and values contain unsupported characters.');
       }
     }
     const root = await this.serverRoot(server);
     const filePath = await resolveInside(root, 'server.properties');
     if (!(await isRegularFile(filePath))) throw new AppError(400, 'not_a_file', 'server.properties is not a regular file.');
-    const output = [
-      '# Managed by NodePilot. Changes may require a server restart.',
-      ...pairs.sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}=${value}`),
-      '',
-    ].join('\n');
+    const original = await readFile(filePath, 'utf8');
+    assertText(original);
+    const removed = Object.keys(parseJavaProperties(original)).filter((key) => !Object.prototype.hasOwnProperty.call(values, key));
+    const output = patchJavaProperties(original, values, removed);
+    assertText(output);
     await atomicWrite(filePath, output);
     return Object.fromEntries(pairs);
   }

@@ -4,6 +4,7 @@ import { chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm,
 import path from 'node:path';
 
 import { AppError, errorMessage } from '../lib/errors.js';
+import { parseJavaProperties } from '../lib/java-properties.js';
 import { isInside, resolveManagedServerRoot } from '../lib/paths.js';
 import type { ServerRepository } from '../repositories/server-repository.js';
 import { ServerVersionRepository } from '../repositories/server-version-repository.js';
@@ -304,7 +305,7 @@ export class ServerVersionService {
       this.phases.set(id, 'preparing');
       await copyTree(originalRoot, candidate);
       const propertyText = await readFile(path.join(originalRoot, 'server.properties'), 'utf8').catch(() => '');
-      const worldName = propertyText.match(/^\s*level-name\s*=\s*(.+)\s*$/m)?.[1]?.trim();
+      const worldName = parseJavaProperties(propertyText)['level-name'];
       await overlayRuntime(runtimeRoot, candidate, worldName);
       this.assertStopped(this.requireServer(id));
       // Re-resolve just before the swap: a directory replaced by a local junction

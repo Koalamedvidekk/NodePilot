@@ -121,6 +121,24 @@ test('runtime refuses a server record whose version changed during asynchronous 
   assert.equal(repository.require(server.id).status, 'offline');
 });
 
+test('runtime reserves a start during world validation and releases it on failure', async (t) => {
+  const { root, repository, server } = await fixture(t);
+  const runtime = new ServerRuntime(repository, root);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  runtime.setStartValidation(async () => {
+    await pending;
+    throw new AppError(409, 'world_downgrade_refused', 'Selected world is newer than this runtime.');
+  });
+  const starting = runtime.start(server, process.execPath);
+  assert.equal(runtime.isProcessActive(server.id), true);
+  await assert.rejects(runtime.start(server, process.execPath), { code: 'server_already_active' });
+  release();
+  await assert.rejects(starting, { code: 'world_downgrade_refused' });
+  assert.equal(runtime.isProcessActive(server.id), false);
+  assert.equal(repository.require(server.id).status, 'offline');
+});
+
 test('auto-wake refuses Java selected for a version replaced during discovery', async (t) => {
   const { database, repository, server } = await fixture(t);
   let resolveJava!: (value: unknown) => void;

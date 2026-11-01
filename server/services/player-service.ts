@@ -5,6 +5,7 @@ import * as nbt from 'prismarine-nbt';
 
 import { AppError } from '../lib/errors.js';
 import { resolveInside, resolveManagedServerRoot } from '../lib/paths.js';
+import { activeWorldPlayerDirectories } from '../lib/world-layout.js';
 import type { ServerRuntime } from './server-runtime.js';
 import type { ServerEvent, ServerRecord } from '../types.js';
 import { PlayerBridgeManager, type BridgeStatus } from './player-bridge.js';
@@ -462,22 +463,7 @@ export class PlayerService {
   }
 
   private async playerDataDirectories(root: string): Promise<string[]> {
-    const candidates = ['playerdata'];
-    try {
-      const entries = await readdir(root, { withFileTypes: true });
-      for (const entry of entries.slice(0, 128)) {
-        if (entry.isDirectory() && !entry.isSymbolicLink()) candidates.push(`${entry.name}/playerdata`);
-      }
-    } catch { return []; }
-    const valid: string[] = [];
-    for (const candidate of candidates) {
-      try {
-        const resolved = await resolveInside(root, candidate);
-        const details = await lstat(resolved);
-        if (details.isDirectory() && !details.isSymbolicLink()) valid.push(resolved);
-      } catch { /* not every world has player data */ }
-    }
-    return valid;
+    return activeWorldPlayerDirectories(root);
   }
 
   private async readOfflinePlayer(root: string, uuid: string): Promise<OfflinePlayerData | undefined> {
