@@ -21,6 +21,9 @@ mandatory telemetry required.
 - Lets you change a stopped server's maximum Java heap from its management page.
   NodePilot starts the JVM with a smaller heap (512 MB to 1 GB, depending on the
   configured maximum) so an idle server does not reserve its full limit up front.
+- Changes a stopped server's Minecraft version in its Versions tab, with a complete
+  backup first. Optional automatic updates check for stable releases hourly and
+  install only while the server is stopped.
 - Streams process output through a WebSocket console and accepts console commands.
 - Provides a Usage tab with managed-process CPU, RSS, Java heap where `jcmd` is available,
   process I/O, managed-directory size, uptime, and bounded rolling charts. It never shows
@@ -149,6 +152,30 @@ must never overwrite local source changes. Update a clone with:
     git pull --ff-only
     npm ci
     npm run build
+
+## Changing a Minecraft version
+
+Open a server, select **Versions**, and use **Check for updates** to load releases
+for its current server software. Stop the server, choose a release, and select
+**Back up & install**. Confirm the world compatibility warning before proceeding.
+NodePilot preserves worlds, player data, configuration, plugins, and mods. It
+records the complete backup's location in this tab. A failed installation restores
+the previous runtime; keep the backup until you have tested the new version.
+
+Enable **Automatic Minecraft updates** to check for newer stable releases hourly
+while NodePilot is running. An update waits for the server to stop; it never
+interrupts players or automatically downgrades a server. Installed plugin or mod
+JARs pause unattended upgrades so you can check their compatibility and install
+the Minecraft version manually. A compatible Java installation is required.
+
+Changing versions keeps the same software, such as Paper or Forge. Downgrading
+does not convert newer worlds into an older format. Unknown server software has
+no supported version installer.
+
+If the Versions page reports that its API is missing after a source update, stop
+your game servers and restart NodePilot. Run `npm run build` before relaunching
+when building manually; the Windows and Linux launchers build both application
+parts through `npm start`. Refresh the browser after startup.
 
 ## Configuration and data
 

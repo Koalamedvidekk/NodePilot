@@ -68,6 +68,12 @@ export interface RuntimeConfigurationInput {
   startupConfig: ServerStartupConfig;
 }
 
+export interface VersionConfigurationInput extends RuntimeConfigurationInput {
+  version: string;
+  requiredJavaMajor?: number | null;
+  javaPath?: string | null;
+}
+
 const validSoftware = new Set<ServerSoftware>([
   'vanilla',
   'paper',
@@ -279,6 +285,29 @@ export class ServerRepository {
     return this.require(id);
   }
 
+  /** Commit a staged runtime and its Minecraft/Java metadata as one DB write. */
+  updateVersion(id: string, input: VersionConfigurationInput): ServerRecord {
+    const current = this.require(id);
+    const software = input.software ?? current.software;
+    if (!validSoftware.has(software) || !/^[A-Za-z0-9._-]{1,64}$/.test(input.version)) {
+      throw new Error('Invalid Minecraft version configuration.');
+    }
+    const startupConfig = assertStartupConfig(input.startupConfig);
+    this.database.prepare(`
+      UPDATE servers SET version = ?, required_java_major = ?, java_path = ?, flavor = ?, software = ?,
+        loader_version = ?, startup_config = ?, status = 'offline', install_state = 'ready', last_error = NULL, updated_at = ?
+      WHERE id = ?
+    `).run(
+      input.version,
+      input.requiredJavaMajor === undefined ? current.requiredJavaMajor : input.requiredJavaMajor,
+      input.javaPath === undefined ? current.javaPath : input.javaPath,
+      serverFlavorForSoftware(software), software,
+      input.loaderVersion === undefined ? current.loaderVersion : input.loaderVersion,
+      JSON.stringify(startupConfig), new Date().toISOString(), id,
+    );
+    return this.require(id);
+  }
+
   setStatus(
     id: string,
     status: ServerStatus,
@@ -370,7 +399,7 @@ export class ServerRepository {
       .run(cacheKey, JSON.stringify(value), new Date().toISOString());
   }
 
-  private require(id: string): ServerRecord {
+  require(id: string): ServerRecord {
     const result = this.find(id);
     if (!result) throw new Error(`Server ${id} does not exist.`);
     return result;

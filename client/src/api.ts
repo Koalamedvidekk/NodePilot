@@ -9,6 +9,7 @@ import type {
   DownloadableJavaInfo,
   MinecraftRequirements,
   MinecraftVersion,
+  ServerVersionStatus,
   Server,
   ServerProperties,
   SystemMetrics,
@@ -251,6 +252,29 @@ export const api = {
         javaMajor: number(version.javaMajor),
       };
     }).filter((version) => Boolean(version.id));
+  },
+
+  async serverVersions(id: string): Promise<ServerVersionStatus> {
+    return unwrap(await request<ServerVersionStatus>(`/servers/${encodeURIComponent(id)}/versions`));
+  },
+
+  async checkServerVersions(id: string): Promise<ServerVersionStatus> {
+    return unwrap(await request<ServerVersionStatus>(`/servers/${encodeURIComponent(id)}/versions/check`, { method: 'POST' }));
+  },
+
+  async setServerVersionPreferences(id: string, autoUpdate: boolean): Promise<ServerVersionStatus> {
+    return unwrap(await request<ServerVersionStatus>(`/servers/${encodeURIComponent(id)}/versions/preferences`, {
+      method: 'PUT',
+      body: JSON.stringify({ autoUpdate }),
+    }));
+  },
+
+  async installServerVersion(id: string, version: string): Promise<{ server: Server; status: ServerVersionStatus }> {
+    const payload = unwrap(await request<{ server: unknown; status: ServerVersionStatus }>(`/servers/${encodeURIComponent(id)}/versions/install`, {
+      method: 'POST',
+      body: JSON.stringify({ version, confirm: true }),
+    }));
+    return { server: normalizeServer(payload.server), status: payload.status };
   },
 
   async java(): Promise<JavaDiscovery> {

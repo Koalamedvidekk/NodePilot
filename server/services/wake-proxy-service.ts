@@ -467,7 +467,14 @@ export class WakeProxyService {
           }
         }
 
-        const current = this.serverRepo.find(server.id) ?? server;
+        const current = this.serverRepo.find(server.id);
+        // Java discovery can overlap a stopped-server version change. Never
+        // launch the newly installed runtime with Java chosen for the old one.
+        if (!current || current.version !== server.version || current.software !== server.software
+          || current.requiredJavaMajor !== server.requiredJavaMajor || current.javaPath !== server.javaPath
+          || JSON.stringify(current.startupConfig) !== JSON.stringify(server.startupConfig)) {
+          throw new Error('The server version or Java configuration changed while waking it. Join again to retry.');
+        }
         if (current.status === 'offline') {
           await this.runtime.start(current, javaPath, warning);
           console.log(`[Wake Proxy] [Server: ${server.name}] Server process launched. Probing backend readiness on port ${current.port}...`);

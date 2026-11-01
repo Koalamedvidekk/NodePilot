@@ -114,6 +114,24 @@ export interface MinecraftVersion {
   javaMajor?: number;
 }
 
+export interface ServerVersionStatus {
+  currentVersion: string;
+  software: string;
+  versions: MinecraftVersion[];
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  autoUpdate: boolean;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  lastBackupPath: string | null;
+  busy: boolean;
+  phase: string | null;
+  automaticUpdateBlockedReason: string | null;
+  warnings: string[];
+  supported: boolean;
+  unsupportedReason: string | null;
+}
+
 export interface JavaInstallation {
   path: string;
   version: string;

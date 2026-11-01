@@ -22,6 +22,12 @@ jobs:
       - run: npm ci
       - name: Test Windows updater and process handoff
         run: npx tsx --test server/test/update-handoff.test.ts server/test/windows-update-helper.test.ts
+      - name: Test Minecraft version changes on Windows
+        run: npx tsx --test server/test/server-version-service.test.ts server/test/version-runtime-integration.test.ts
+      - name: Build and verify the Versions API
+        run: |
+          npm run build -w server
+          node scripts/test-versions-api.mjs
 
   release:
     name: Test, package, and publish
@@ -57,6 +63,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify the compiled Versions API
+        run: node scripts/test-versions-api.mjs
 
       - name: Create the verified updater package
         id: package

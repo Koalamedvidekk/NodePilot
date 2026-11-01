@@ -125,6 +125,7 @@ function cleanLine(line: string): string {
 export class ServerRuntime extends EventEmitter {
   private readonly processes = new Map<string, RuntimeProcess>();
   private readonly logs = new Map<string, ConsoleLine[]>();
+  private startGuard?: (serverId: string) => void;
 
   constructor(
     private readonly repository: ServerRepository,
@@ -137,6 +138,18 @@ export class ServerRuntime extends EventEmitter {
   getLogs(serverId: string, tail = 300): ConsoleLine[] {
     const safeTail = Math.max(1, Math.min(tail, MAX_LOG_LINES));
     return (this.logs.get(serverId) ?? []).slice(-safeTail);
+  }
+
+  setStartGuard(guard: (serverId: string) => void): void {
+    this.startGuard = guard;
+  }
+
+  private assertStartAllowed(server: ServerRecord): void {
+    this.startGuard?.(server.id);
+    const current = this.repository.find(server.id);
+    if (!current || current.version !== server.version || JSON.stringify(current.startupConfig) !== JSON.stringify(server.startupConfig)) {
+      throw new AppError(409, 'server_version_changed', 'The server version changed while starting. Refresh and try again.');
+    }
   }
 
   status(serverId: string): ServerStatus | undefined {
@@ -164,6 +177,7 @@ export class ServerRuntime extends EventEmitter {
   }
 
   async start(server: ServerRecord, javaPath?: string, warning?: string): Promise<ServerRecord> {
+    this.assertStartAllowed(server);
     if (server.installState !== 'ready') {
       throw new AppError(409, 'server_not_ready', 'This server is still installing or its installation failed.');
     }
@@ -182,6 +196,7 @@ export class ServerRuntime extends EventEmitter {
       if (process.platform === 'linux') {
         env.LD_LIBRARY_PATH = `${directory}:${env.LD_LIBRARY_PATH ?? ''}`;
       }
+      this.assertStartAllowed(server);
       try {
         child = spawn(exePath, startup.gameArguments, {
           cwd: directory,
@@ -206,6 +221,7 @@ export class ServerRuntime extends EventEmitter {
       const customJvmArgs = settings?.customJvmArgs ?? [];
       const launch = await launchArguments(directory, startup, initialMemoryMb, server.memoryMb, customJvmArgs);
       const args = launch.args;
+      this.assertStartAllowed(server);
       try {
         child = spawn(javaPath, args, {
           cwd: directory,

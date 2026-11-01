@@ -26,6 +26,7 @@ import { ServerRepository } from './repositories/server-repository.js';
 import { HostSettingsRepository } from './repositories/host-settings-repository.js';
 import { ServerTunnelRepository } from './repositories/server-tunnel-repository.js';
 import { ServerSettingsRepository } from './repositories/server-settings-repository.js';
+import { ServerVersionRepository } from './repositories/server-version-repository.js';
 import { FileService } from './services/file-service.js';
 import { JavaService } from './services/java-service.js';
 import { ImportService } from './services/import-service.js';
@@ -44,6 +45,7 @@ import { ServerTunnelService } from './services/server-tunnel-service.js';
 import { AutoSleepService } from './services/auto-sleep-service.js';
 import { WakeProxyService } from './services/wake-proxy-service.js';
 import { UpdateService } from './services/update-service.js';
+import { ServerVersionService } from './services/server-version-service.js';
 import { parseMemoryMb, validateCustomJvmArgs } from './lib/settings-helpers.js';
 import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, JavaInstallation, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
 
@@ -355,6 +357,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const minecraft = new MinecraftService(repository, config.serversDirectory);
   const java = new JavaService(config.dataDirectory);
   const runtime = new ServerRuntime(repository, config.serversDirectory, settingsRepository);
+  const serverMutationCounts = new Map<string, number>();
+  const versionSettings = new ServerVersionRepository(database);
+  const serverVersions = new ServerVersionService(
+    { serversDirectory: config.serversDirectory, backupsDirectory: config.backupsDirectory },
+    repository, minecraft, java,
+    { isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 },
+    versionSettings,
+    () => updates.isRestartScheduled(),
+  );
+  runtime.setStartGuard((id) => {
+    if (updates.isRestartScheduled()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
+    if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
+  });
   const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
   const files = new FileService(config.serversDirectory);
@@ -368,6 +383,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   wakeProxy.start();
   const system = new SystemService(repository, config.dataDirectory);
   const app = Fastify({ logger: { level: process.env.NODEPILOT_LOG_LEVEL ?? 'info' }, bodyLimit: 1_100_000 });
+  // Prevent a version swap while an existing file/settings/lifecycle mutation is
+  // still in progress, and reject new mutations once a version swap owns the server.
+  const mutationRequests = new WeakMap<FastifyRequest, string>();
+  app.addHook('preHandler', async (request) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
+    const match = request.url.split('?')[0].match(/^\/api\/servers\/([0-9a-f-]{36})(\/.*)?$/i);
+    if (!match || match[2]?.startsWith('/versions')) return;
+    const id = match[1];
+    if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
+    serverMutationCounts.set(id, (serverMutationCounts.get(id) ?? 0) + 1);
+    mutationRequests.set(request, id);
+  });
+  const releaseServerMutation = (request: FastifyRequest) => {
+    const id = mutationRequests.get(request);
+    if (!id) return;
+    mutationRequests.delete(request);
+    const remaining = (serverMutationCounts.get(id) ?? 1) - 1;
+    if (remaining > 0) serverMutationCounts.set(id, remaining);
+    else serverMutationCounts.delete(id);
+  };
+  app.addHook('onResponse', async (request) => releaseServerMutation(request));
+  app.addHook('onRequestAbort', async (request) => releaseServerMutation(request));
   const isAllowedAppOrigin = (origin: string | undefined) => isAllowedRequestOrigin(origin, tor.getAllowedOriginHostname());
   const getTorStatus = async () => ({
     ...(await tor.getStatus()),
@@ -722,6 +759,32 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const { id } = serverParamsSchema.parse(request.params);
     return { properties: await files.getProperties(requireServer(repository, id)) };
   });
+  app.get('/api/servers/:id/versions', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    requireServer(repository, id);
+    return serverVersions.getStatus(id);
+  });
+  app.post('/api/servers/:id/versions/check', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    requireServer(repository, id);
+    return serverVersions.check(id);
+  });
+  app.put('/api/servers/:id/versions/preferences', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    const { autoUpdate } = z.object({ autoUpdate: z.boolean() }).parse(request.body);
+    requireServer(repository, id);
+    return serverVersions.setAutoUpdate(id, autoUpdate);
+  });
+  app.post('/api/servers/:id/versions/install', async (request) => {
+    const { id } = serverParamsSchema.parse(request.params);
+    const input = z.object({
+      version: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/),
+      confirm: z.literal(true, { error: 'Confirm the Minecraft version change before continuing.' }),
+    }).parse(request.body);
+    requireServer(repository, id);
+    const status = await serverVersions.changeVersion(id, input.version, { confirm: true });
+    return { server: await serializeServerWithDiskCheck(repository.require(id), config.serversDirectory), status };
+  });
   app.put('/api/servers/:id/properties', async (request) => {
     const { id } = serverParamsSchema.parse(request.params);
     const { values } = propertiesSchema.parse(request.body);
@@ -980,6 +1043,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/updates/install', async (_request, reply) => {
+    if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
     if (!options.isPrimaryInstance || !options.instanceLock) {
       throw new AppError(409, 'update_not_primary_instance', 'Only the primary NodePilot instance may apply an update.');
     }
@@ -991,6 +1055,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const restart = setTimeout(() => {
         void (async () => {
           try {
+            if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
             await updates.launchPreparedUpdate();
             await app.close();
             options.instanceLock?.release();
@@ -1502,6 +1567,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.decorate('autoStart', autoStart);
   app.addHook('onListen', async () => {
+    if (options.isPrimaryInstance) serverVersions.start();
+  });
+  app.addHook('onListen', async () => {
     if (!hostSettings.getSettings().torEnabled) return;
     if (!config.pin) {
       autoStart.log('warn', 'Private remote access was not restored because the panel access PIN is missing.');
@@ -1520,6 +1588,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook('onClose', async () => {
     updates.stop();
+    await serverVersions.stop();
     autoSleep.stop();
     wakeProxy.stop();
     await tor.stop();

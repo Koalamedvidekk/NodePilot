@@ -73,6 +73,17 @@ export function openDatabase(databasePath: string): SqliteDatabase {
   }
 
   database.exec(`
+    CREATE TABLE IF NOT EXISTS server_version_settings (
+      server_id TEXT PRIMARY KEY,
+      auto_update INTEGER NOT NULL DEFAULT 0 CHECK (auto_update IN (0, 1)),
+      last_checked_at TEXT,
+      latest_version TEXT,
+      last_error TEXT,
+      last_backup_path TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS addon_installs (
       server_id TEXT NOT NULL,
       addon_type TEXT NOT NULL CHECK (addon_type IN ('plugin', 'mod')),

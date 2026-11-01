@@ -3271,6 +3271,49 @@ select option:hover {
 .update-notification-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 21px; }
 .update-notification-later { margin: 12px 0 0; color: var(--muted-2); font-size: 11px; text-align: right; }
 
+/* Per-server Minecraft version management. */
+.versions-panel { display: grid; gap: 18px; }
+.versions-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 4px 0; }
+.versions-heading h3 { margin: 4px 0 7px; font-size: 21px; }
+.versions-heading p:last-child { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.versions-heading > .button { flex-shrink: 0; }
+.versions-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.versions-summary { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 21px; }
+.versions-summary > span { color: var(--muted); font-size: 12px; }
+.versions-summary > strong { color: var(--text); font-size: 25px; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.versions-summary > strong.versions-check-time { font-size: 15px; letter-spacing: 0; line-height: 1.6; }
+.versions-summary > small { color: var(--muted-2); font-size: 11px; line-height: 1.5; }
+.versions-card { padding: 22px; }
+.versions-card h3 { margin: 0 0 8px; color: var(--text); font-size: 15px; }
+.versions-card p { color: var(--muted); font-size: 12px; line-height: 1.65; }
+.versions-card > .panel-heading { padding: 0; margin-bottom: 18px; border: 0; }
+.versions-card .inline-alert { margin-top: 14px; }
+.versions-install-form { display: flex; align-items: end; gap: 14px; margin-top: 18px; }
+.versions-install-form > .form-field { flex: 1; min-width: 0; }
+.versions-install-form > .button { flex-shrink: 0; min-height: 43px; }
+.versions-progress { display: flex; align-items: center; gap: 10px; padding: 13px 0 0; color: var(--cyan); font-size: 13px; }
+.versions-auto-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.versions-auto-row > div { max-width: 730px; }
+.versions-auto-row p { margin: 0; }
+.versions-auto-control { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 112px; color: var(--text); font-size: 13px; cursor: pointer; }
+.versions-auto-control input { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+.versions-auto-control input:disabled { cursor: not-allowed; }
+.versions-warning { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0 0; }
+.versions-warning > svg { flex-shrink: 0; margin-top: 3px; color: #e9b65d; }
+.versions-backup > div { display: flex; align-items: center; gap: 9px; }
+.versions-backup h3 { margin: 0; }
+.versions-backup code { display: block; overflow-wrap: anywhere; font-size: 11px; line-height: 1.7; color: var(--muted); }
+
+@media (max-width: 700px) {
+  .versions-heading, .versions-auto-row { align-items: flex-start; flex-direction: column; }
+  .versions-summary-grid { grid-template-columns: 1fr; }
+  .versions-summary { gap: 7px; padding: 18px; }
+  .versions-summary > strong { font-size: 22px; }
+  .versions-card { padding: 18px; }
+  .versions-install-form { flex-direction: column; align-items: stretch; }
+  .versions-auto-control { justify-content: flex-start; }
+}
+
 @media (max-width: 500px) {
   .update-notification-backdrop { align-items: end; padding: 12px; }
   .update-notification { padding: 20px; border-radius: 15px; }

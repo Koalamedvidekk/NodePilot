@@ -6,13 +6,14 @@ import { PlayersPanel } from './PlayersPanel';
 import { PropertiesPanel } from './PropertiesPanel';
 import { UsagePanel } from './UsagePanel';
 import { ServerSettingsPanel } from './ServerSettingsPanel';
+import { VersionsPanel } from './VersionsPanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServerTunnelCard } from '../components/ServerTunnelCard';
 import type { ConsoleLine, FileEntry, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
-type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'properties' | 'files' | 'settings';
+type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'versions' | 'properties' | 'files' | 'settings';
 
 export type AddonCategory = 'plugins' | 'mods' | null;
 
@@ -28,6 +29,7 @@ function tabFromPath(pathname: string): ManagementTab {
   if (pathname.endsWith('/usage')) return 'usage';
   if (pathname.endsWith('/console')) return 'console';
   if (pathname.endsWith('/players')) return 'players';
+  if (pathname.endsWith('/versions')) return 'versions';
   if (pathname.endsWith('/addons') || pathname.endsWith('/plugins') || pathname.endsWith('/mods')) return 'addons';
   if (pathname.endsWith('/properties')) return 'properties';
   if (pathname.endsWith('/files')) return 'files';
@@ -795,6 +797,10 @@ export function ServerManagementPage() {
     return updated;
   };
 
+  const applyVersionServerUpdate = useCallback((updated: Server) => {
+    setServer((current) => current?.id === updated.id ? { ...current, ...updated } : current);
+  }, []);
+
   const remove = async () => {
     if (!server || !window.confirm(`Delete “${server.name}” and its local server files? This cannot be undone.`)) return;
     setDeleting(true);
@@ -817,12 +823,13 @@ export function ServerManagementPage() {
       ? { tab: 'addons' as const, label: 'Mods', icon: 'box' as const, to: `${base}/mods` }
       : null;
 
-  const tabs: Array<{ tab: ManagementTab; label: string; icon: 'dashboard' | 'activity' | 'terminal' | 'users' | 'box' | 'settings' | 'files' | 'sliders'; to: string }> = [
+  const tabs: Array<{ tab: ManagementTab; label: string; icon: 'dashboard' | 'activity' | 'terminal' | 'users' | 'box' | 'settings' | 'files' | 'sliders' | 'refresh'; to: string }> = [
     { tab: 'overview', label: 'Overview', icon: 'dashboard', to: base },
     { tab: 'usage', label: 'Usage', icon: 'activity', to: `${base}/usage` },
     { tab: 'console', label: 'Console', icon: 'terminal', to: `${base}/console` },
     { tab: 'players', label: 'Players', icon: 'users', to: `${base}/players` },
     ...(addonTab ? [addonTab] : []),
+    { tab: 'versions', label: 'Versions', icon: 'refresh', to: `${base}/versions` },
     { tab: 'properties', label: 'Properties', icon: 'sliders', to: `${base}/properties` },
     { tab: 'files', label: 'Files', icon: 'files', to: `${base}/files` },
     { tab: 'settings', label: 'Settings', icon: 'settings', to: `${base}/settings` },
@@ -855,6 +862,7 @@ export function ServerManagementPage() {
       {tab === 'usage' && <UsagePanel server={server} />}
       {tab === 'console' && <ConsolePanel server={server} />}
       {tab === 'players' && <PlayersPanel server={server} />}
+      {tab === 'versions' && <VersionsPanel key={server.id} server={server} onServerUpdated={applyVersionServerUpdate} />}
       {tab === 'addons' && (
         addonCategory ? (
           <AddonsPanel server={server} />
