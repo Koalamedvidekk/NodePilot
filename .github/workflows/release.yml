@@ -21,7 +21,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Test Windows updater and process handoff
-        run: npx tsx --test server/test/update-handoff.test.ts server/test/windows-update-helper.test.ts
+        run: npx tsx --test server/test/update-handoff.test.ts server/test/update-process.test.ts server/test/windows-update-helper.test.ts
       - name: Test Minecraft version changes on Windows
         run: npx tsx --test server/test/server-version-service.test.ts server/test/version-runtime-integration.test.ts
       - name: Test Worlds layouts, transfers and recovery on Windows

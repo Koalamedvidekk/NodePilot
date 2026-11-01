@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { access, mkdir, open, readFile, readdir, rm, stat, statfs, unlink } from 'node:fs/promises';
@@ -9,6 +9,7 @@ import * as yauzl from 'yauzl';
 
 import { AppError } from '../lib/errors.js';
 import { cleanVersion, compareSemVer, isNewerVersion, parseSemVer } from '../lib/semver.js';
+import { spawnUpdateHelper } from '../lib/update-process.js';
 import type { HostSettingsRepository } from '../repositories/host-settings-repository.js';
 import type { ServerRepository } from '../repositories/server-repository.js';
 import type {
@@ -599,7 +600,7 @@ export class UpdateService {
       await mkdir(this.updatesDirectory, { recursive: true });
       const log = await open(path.join(this.updatesDirectory, 'helper.log'), 'a', 0o600);
       try {
-        const child = spawn(command, args, { cwd: this.projectRoot, detached: true, stdio: ['ignore', log.fd, log.fd], windowsHide: true });
+        const child = spawnUpdateHelper(command, args, this.projectRoot, log.fd);
         const readiness = waitForUpdateHelper(child, readyFile);
         child.unref();
         await readiness;
