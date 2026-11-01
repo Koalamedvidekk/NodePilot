@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { AppError, errorMessage } from '../lib/errors.js';
-import { isInside, resolveManagedServerRoot } from '../lib/paths.js';
+import { resolveManagedServerRoot } from '../lib/paths.js';
 import { parseJavaProperties, patchJavaProperties } from '../lib/java-properties.js';
 import { discoverWorldGroups, resolveWorldGroup, safeWorldPath } from '../lib/world-layout.js';
 import { metadataFiles, metadataRevision, patchWorldMetadata, readWorldMetadata } from '../lib/world-metadata.js';
@@ -306,8 +306,8 @@ export class WorldService {
     const operation=this.catalogue.operation(operationId,id);
     if(!operation||operation.state!=='succeeded'||!operation.artifact)throw new AppError(404,'world_download_unavailable','This world download is not ready.');
     const root=await realpath(path.join(this.config.dataDirectory,'worlds','exports'));
-    const file=operation.artifact;
-    if(!isInside(root,file)||(await lstat(file)).isSymbolicLink()||!(await lstat(file)).isFile()||!isInside(root,await realpath(file)))throw new AppError(409,'unsafe_world_download','NodePilot refused an unsafe download path.');
+    const file=await safeWorldPath(root,operation.id+'.zip');
+    if(!(await lstat(file)).isFile()||file!==await realpath(operation.artifact))throw new AppError(409,'unsafe_world_download','NodePilot refused an unsafe download path.');
     return file;
   }
 
@@ -330,13 +330,16 @@ export class WorldService {
     const journal=JSON.parse(operation.recovery) as Journal;
     const server=this.requireServer(operation.serverId);
     const root=await resolveManagedServerRoot(this.config.serversDirectory,server.directory);
-    const journalBase=await realpath(path.join(this.config.dataDirectory,'worlds','journals'));
-    if(!isInside(journalBase,journal.directory)||!isInside(journalBase,await realpath(journal.directory)))throw new Error('Invalid world recovery journal.');
+    const checkedDirectory=await safeWorldPath(this.config.dataDirectory,'worlds/journals/'+operation.id);
+    if(checkedDirectory!==await realpath(journal.directory))throw new Error('Invalid world recovery journal.');
+    // realpath resolves Windows 8.3 aliases as well as configured data-directory
+    // aliases. All following reads use the checked canonical directory.
+    journal.directory=checkedDirectory;
     if(journal.fullBackup&&journal.group)await this.archives.restoreWorld(server,journal.group,journal.fullBackup);
     for(const relative of journal.created){const target=await safeWorldPath(root,relative,true);if(await exists(target))await rm(target,{recursive:true,force:true});}
     for(const file of journal.files){
       const target=await safeWorldPath(root,file.relative,true);
-      if(file.exists){const source=path.resolve(journal.directory,'files',file.relative);if(!isInside(journal.directory,source))throw new Error('Invalid recovery file.');await mkdir(path.dirname(target),{recursive:true});await atomicWrite(target,await readFile(source));}
+      if(file.exists){const source=await safeWorldPath(journal.directory,'files/'+file.relative);await mkdir(path.dirname(target),{recursive:true});await atomicWrite(target,await readFile(source));}
       else if(await exists(target))await rm(target,{force:true});
     }
     if(journal.before)this.catalogue.save(journal.before);

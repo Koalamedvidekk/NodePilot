@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -133,11 +133,11 @@ test('preparing a world keeps the server stopped and switching preserves isolate
   await f.success(await f.request('PATCH', `${base}/${second.id}`, { revision: second.revision, difficulty: 'easy', name: 'Second saved' }));
   const currentSecond = (await f.details(second.id)).world;
   await f.success(await f.request('POST', `${base}/${second.id}/activate`, { revision: currentSecond.revision, confirmCompatibility: true }));
-  assert.deepEqual(await activeWorldPlayerDirectories(f.directory), [path.join(f.directory, 'second/playerdata')]);
+  assert.deepEqual(await activeWorldPlayerDirectories(f.directory), [await realpath(path.join(f.directory, 'second/playerdata'))]);
   assert.equal(parseJavaProperties(await readFile(path.join(f.directory, 'server.properties'), 'utf8')).difficulty, 'easy');
   const currentOriginal = (await f.details(original.id)).world;
   await f.success(await f.request('POST', `${base}/${original.id}/activate`, { revision: currentOriginal.revision, confirmCompatibility: true }));
-  assert.deepEqual(await activeWorldPlayerDirectories(f.directory), [path.join(f.directory, 'world/playerdata')]);
+  assert.deepEqual(await activeWorldPlayerDirectories(f.directory), [await realpath(path.join(f.directory, 'world/playerdata'))]);
   assert.equal(await readFile(path.join(f.directory, 'second/playerdata/owner.dat'), 'utf8'), 'inventory-B');
   const properties = await readFile(path.join(f.directory, 'server.properties'), 'utf8');
   assert.equal(parseJavaProperties(properties).difficulty, 'normal');
@@ -226,6 +226,31 @@ test('restart recovery restores a durable property snapshot and blocks starts wh
   await f.service.recover();
   assert.equal(f.service.hasRecoveryBlock(serverId), true);
   assert.throws(() => f.service.assertCanStart(serverId), /recovery/);
+});
+
+test('configured data-directory aliases retain working rollback journals and authenticated export artifacts', async (t) => {
+  const f=await fixture(t);
+  const alias=path.join(f.temporary,'data-alias');
+  await symlink(f.dataDirectory,alias,process.platform==='win32'?'junction':'dir');
+  const service=new WorldService({dataDirectory:alias,serversDirectory:path.join(alias,'servers'),backupsDirectory:path.join(alias,'backups')},f.servers,f.catalogue,{isProcessActive:()=>false});
+  t.after(()=>service.stop());
+  const before=await service.list(serverId);
+  const properties=await readFile(path.join(f.directory,'server.properties'));
+  const internals=service as unknown as {writeProperties:(...args:unknown[])=>Promise<void>};
+  const original=internals.writeProperties;
+  internals.writeProperties=async()=>{throw new Error('Alias rollback fixture');};
+  const failed=await f.wait(await service.prepare(serverId,{...generation,difficulty:'normal',name:'Alias failure',revision:before.revision}));
+  internals.writeProperties=original;
+  assert.equal(failed.state,'failed');
+  assert.equal(failed.phase,'failed');
+  assert.equal(service.hasRecoveryBlock(serverId),false);
+  assert.equal((await service.list(serverId)).worlds.length,before.worlds.length);
+  assert.deepEqual(await readFile(path.join(f.directory,'server.properties')),properties);
+  const active=(await service.list(serverId)).worlds.find(world=>world.active)!;
+  const exported=await f.wait(await service.export(serverId,active.id,active.revision));
+  assert.equal(exported.state,'succeeded',exported.error??undefined);
+  const artifact=await service.artifact(serverId,exported.id);
+  assert.equal(artifact,await realpath(path.join(alias,'worlds','exports',exported.id+'.zip')));
 });
 
 test('an external edit during asynchronous preflight is rejected after maintenance ownership is acquired', async (t) => {

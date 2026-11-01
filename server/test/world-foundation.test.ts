@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -274,9 +274,9 @@ test('active player discovery ignores inactive worlds and recognizes modern play
   await mkdir(path.join(root, 'world-a/playerdata'), { recursive: true });
   await mkdir(path.join(root, 'world-b/players/data'), { recursive: true });
   await mkdir(path.join(root, 'playerdata'), { recursive: true });
-  assert.deepEqual(await activeWorldPlayerDirectories(root), [path.join(root, 'world-b/players/data')]);
+  assert.deepEqual(await activeWorldPlayerDirectories(root), [await realpath(path.join(root, 'world-b/players/data'))]);
   await writeFile(path.join(root, 'server.properties'), 'level-name=world-a\n');
-  assert.deepEqual(await activeWorldPlayerDirectories(root), [path.join(root, 'world-a/playerdata')]);
+  assert.deepEqual(await activeWorldPlayerDirectories(root), [await realpath(path.join(root, 'world-a/playerdata'))]);
 });
 
 test('linked world/dimension paths and traversal are blocked without reading outside data', async (t) => {
