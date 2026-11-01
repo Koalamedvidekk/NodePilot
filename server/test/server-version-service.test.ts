@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -123,7 +124,7 @@ test('manual version change backs up everything and preserves worlds, settings a
   assert.equal(f.service.isBusy(f.server.id), false);
   assert.equal(await readFile(path.join(f.directory, 'server.jar'), 'utf8'), 'updated runtime');
   const backup = status.lastBackupPath!;
-  assert.ok(backup.startsWith(f.backupsDirectory + path.sep));
+  assert.equal(path.dirname(backup), await realpath(f.backupsDirectory));
   assert.equal(await readFile(path.join(backup, 'server.jar'), 'utf8'), 'old runtime');
   for (const file of ['server.properties', 'eula.txt', 'ops.json', 'custom-world/playerdata/owner.dat', 'plugins/example.jar', 'config/settings.yml']) {
     assert.deepEqual(await readFile(path.join(f.directory, file)), await readFile(path.join(backup, file)));
@@ -149,7 +150,25 @@ test('download failure leaves original files and version untouched and retains c
 test('database commit failure restores the original runtime after directory swap', async (t) => {
   const f = await fixture(t);
   f.db.exec("CREATE TRIGGER refuse_version_change BEFORE UPDATE OF version ON servers BEGIN SELECT RAISE(ABORT, 'simulated commit failure'); END");
+  const originalUpdateVersion = f.servers.updateVersion.bind(f.servers);
+  let persistedStartBlockObserved = false;
+  f.servers.updateVersion = (id, input) => {
+    // Observe from another SQLite connection after files were swapped but before
+    // the final version commit. A process crash here must leave startup blocked.
+    const observer = openDatabase(path.join(f.temporary, 'database.sqlite'));
+    try {
+      const persisted = new ServerRepository(observer).require(id);
+      assert.equal(persisted.installState, 'failed');
+      assert.equal(persisted.status, 'error');
+      assert.equal(persisted.version, '1.21.4');
+      assert.match(persisted.lastError!, /version change interrupted/);
+      assert.ok(persisted.lastError!.includes(f.settings.find(id)!.lastBackupPath!));
+      persistedStartBlockObserved = true;
+    } finally { observer.close(); }
+    return originalUpdateVersion(id, input);
+  };
   await assert.rejects(f.service.changeVersion(f.server.id, '1.21.5', { confirm: true }), /simulated commit failure/);
+  assert.equal(persistedStartBlockObserved, true);
   assert.equal(f.servers.require(f.server.id).version, '1.21.4');
   assert.equal(f.servers.require(f.server.id).installState, 'ready');
   assert.equal(await readFile(path.join(f.directory, 'server.jar'), 'utf8'), 'old runtime');
@@ -170,6 +189,31 @@ test('running servers, missing Java and an application update are refused before
   await assert.rejects(f.service.changeVersion(f.server.id, '1.21.5', { confirm: true }), /application update/);
   assert.equal(f.state.stages, 0);
   assert.equal(f.settings.find(f.server.id)!.lastBackupPath, null);
+});
+
+test('blocked rollback retains original files and leaves a durable failed installation', async (t) => {
+  const f = await fixture(t);
+  let retainedWork = '';
+  f.servers.updateVersion = () => {
+    retainedWork = path.join(f.serversDirectory, readdirSync(f.serversDirectory).find((entry) => entry.startsWith('.nodepilot-version-'))!);
+    // A nonempty destination prevents the rollback rename on Windows and Linux.
+    const obstruction = path.join(retainedWork, 'failed-candidate');
+    mkdirSync(obstruction);
+    writeFileSync(path.join(obstruction, 'occupied'), 'simulate blocked restoration');
+    throw new Error('simulated commit failure');
+  };
+  await assert.rejects(f.service.changeVersion(f.server.id, '1.21.5', { confirm: true }), /automatic rollback could not finish/);
+  const record = f.servers.require(f.server.id);
+  assert.equal(record.installState, 'failed');
+  assert.equal(record.status, 'error');
+  assert.equal(record.version, '1.21.4');
+  assert.equal(await readFile(path.join(retainedWork, 'previous', 'server.jar'), 'utf8'), 'old runtime');
+  assert.equal(await readFile(path.join(f.settings.find(f.server.id)!.lastBackupPath!, 'server.jar'), 'utf8'), 'old runtime');
+  assert.match((await f.service.getStatus(f.server.id)).automaticUpdateBlockedReason!, /automatic rollback could not finish/);
+  f.settings.save(f.server.id, { autoUpdate: true });
+  await f.service.runAutomaticChecks();
+  assert.equal(f.state.stages, 1);
+  assert.match(f.settings.find(f.server.id)!.lastError!, /automatic rollback could not finish/);
 });
 
 test('concurrent changes are refused and a newly active server is not swapped', async (t) => {

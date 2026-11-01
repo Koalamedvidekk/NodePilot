@@ -197,6 +197,7 @@ export class ServerVersionService {
       if (addons) blockedReason = 'Automatic Minecraft upgrades are paused because this server has plugins or mods. Check add-on compatibility and change the version manually.';
     } catch (error) { blockedReason = errorMessage(error); }
     if (!isStableMinecraftVersion(server.version)) blockedReason = 'Automatic updates require a normal numeric Minecraft release version.';
+    if (server.installState !== 'ready') blockedReason = server.lastError ?? 'The server installation is not ready. Resolve its installation error before enabling automatic updates.';
     if (!supported) blockedReason = 'This imported or unknown server software does not have a supported installer.';
     return {
       serverId: id, currentVersion: server.version, software: server.software, versions,
@@ -260,6 +261,7 @@ export class ServerVersionService {
     let originalRoot: string | undefined;
     let movedOriginal: string | undefined;
     let committed = false;
+    let durableStartBlock = false;
     let incompleteBackup: string | undefined;
     try {
       const server = this.requireServer(id);
@@ -310,6 +312,11 @@ export class ServerVersionService {
       const resolvedAgain = await resolveManagedServerRoot(this.config.serversDirectory, server.directory);
       if (resolvedAgain !== originalRoot) throw new AppError(409, 'server_directory_changed', 'The server directory changed during version installation.');
       this.phases.set(id, 'applying');
+      // Persist the start block before changing either directory. If the process
+      // dies between a rename and the metadata commit, startup must not launch
+      // potentially mismatched files with the previous version configuration.
+      this.servers.markInstallFailed(id, 'Minecraft version change interrupted. Restore the full backup at ' + backup + ' before starting this server.');
+      durableStartBlock = true;
       const previous = path.join(work, 'previous');
       await rename(originalRoot, previous);
       movedOriginal = previous;
@@ -344,6 +351,7 @@ export class ServerVersionService {
           throw new AppError(500, 'version_rollback_failed', message);
         }
       }
+      if (!committed && durableStartBlock) this.servers.markReady(id);
       this.settings.save(id, { lastError: errorMessage(error) });
       throw error;
     } finally {

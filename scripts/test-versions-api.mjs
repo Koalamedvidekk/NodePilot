@@ -34,10 +34,19 @@ async function stopChild() {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const running = child;
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Isolated test backend did not exit.')), 10_000);
-    running.once('exit', () => { clearTimeout(timeout); resolve(); });
-    // This PID belongs exclusively to the test. Never kill by executable name.
-    running.kill('SIGTERM');
+    const timeout = setTimeout(() => {
+      running.kill('SIGKILL');
+      reject(new Error('Isolated test backend did not shut down gracefully.'));
+    }, 10_000);
+    running.once('exit', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve();
+      else reject(new Error('Isolated test backend shutdown exit code: ' + code));
+    });
+    // Windows does not deliver POSIX signals to a Node child. The isolated
+    // harness emits the same event so both platforms exercise actual app.close.
+    if (process.platform === 'win32') running.send('test-shutdown');
+    else running.kill('SIGTERM');
   });
   child = undefined;
 }
@@ -71,6 +80,9 @@ PlayitService.prototype.getStatus = async () => ({ installed: false, isManaged: 
   binaryPath: null, version: null, isRunning: false, secretExists: false,
   secretPath: null, claimUrl: null });
 await import('./server/dist/index.js');
+process.on('message', (message) => {
+  if (message === 'test-shutdown') process.emit('SIGTERM');
+});
 `);
 
   const { openDatabase } = await import(pathToFileURL(path.join(root, 'server', 'dist', 'db.js')).href);
@@ -118,7 +130,7 @@ await import('./server/dist/index.js');
   async function startChild() {
     output = '';
     child = spawn(process.execPath, [path.join(root, 'run.mjs')], {
-      cwd: root, env: { ...process.env }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root, env: { ...process.env }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     child.stdout.on('data', (chunk) => { output = (output + chunk).slice(-24_000); });
     child.stderr.on('data', (chunk) => { output = (output + chunk).slice(-24_000); });

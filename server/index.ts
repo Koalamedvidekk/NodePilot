@@ -1645,9 +1645,22 @@ try {
   instanceLock.release();
 }
 
-process.once('SIGINT', () => {
-  instanceLock.release();
-});
-process.once('SIGTERM', () => {
-  instanceLock.release();
-});
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  let exitCode = 0;
+  try {
+    // Closing Fastify also waits for version backups/installations, stops game
+    // processes, and closes SQLite before another panel can acquire the lock.
+    await app.close();
+  } catch (error) {
+    app.log.error(error);
+    exitCode = 1;
+  } finally {
+    instanceLock.release();
+    process.exit(exitCode);
+  }
+}
+process.on('SIGINT', () => { void shutdown(); });
+process.on('SIGTERM', () => { void shutdown(); });
