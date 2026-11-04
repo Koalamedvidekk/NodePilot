@@ -36,6 +36,8 @@ mandatory telemetry required.
   original, worlds, player data, configuration, plugins, mods, and recognized loader launch files.
 - Keeps plugin and mod workflows separate, backs up add-ons before change, and supports
   Modrinth plus Hangar for compatible Paper/Purpur plugins.
+- Lets you install, upload, update, or remove add-ons while a server runs. Changes
+  stay in a cancellable queue until the next start or restart. See [add-on usage](docs/addons.md).
 - Stores the server catalogue in SQLite and marks previously-running processes stopped on
   application recovery (it never silently starts game processes after a restart).
 

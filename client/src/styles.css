@@ -1369,6 +1369,28 @@ select option:hover {
 .addon-empty svg { color: #9b8cff; }
 .addon-loading { display: grid; gap: 8px; }
 .addon-loading .loading-bar { height: 92px; }
+.addon-pending-card { margin: 16px 0; padding: 16px 18px; border: 1px solid rgba(142,122,255,.3); border-radius: 12px; background: rgba(123,101,255,.055); }
+.addon-pending-count { margin-left: 5px; padding: 2px 7px; border-radius: 99px; color: #d6cdff; background: rgba(123,101,255,.2); font-size: 11px; }
+.addon-pending-list { margin-top: 12px; }
+.addon-pending-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.addon-pending-copy { min-width: 0; }
+.addon-pending-copy strong, .addon-pending-copy > span, .addon-pending-copy small, .addon-pending-copy em { display: block; overflow-wrap: anywhere; }
+.addon-pending-copy strong { color: var(--text); font-size: 12px; }
+.addon-pending-copy > span { margin-top: 5px; color: var(--muted); font-size: 11px; }
+.addon-pending-copy small { margin-top: 4px; color: var(--muted-2); font-size: 10px; }
+.addon-pending-copy em { margin-top: 6px; color: #ffb6a3; font-style: normal; font-size: 11px; }
+.addon-pending-row .button { min-height: 32px; padding: 6px 10px; font-size: 11px; }
+.addon-pending-badge { display: inline-block !important; width: fit-content; max-width: 100%; padding: 3px 7px; border-radius: 5px; color: #cfc5ff !important; background: rgba(123,101,255,.14); font-size: 10px !important; white-space: normal !important; line-height: 1.4; }
+.addon-pending-badge.is-remove { color: #ffb4b4 !important; background: rgba(255,110,110,.1); }
+.addon-pending-error span + span { margin-top: 6px; }
+@media (max-width: 640px) {
+  .addon-pending-card { padding: 14px; }
+  .addon-pending-row { grid-template-columns: auto minmax(0,1fr); gap: 9px; }
+  .addon-pending-row > .button { grid-column: 2; justify-self: start; }
+  .addon-installed-row { grid-template-columns: auto minmax(0,1fr); }
+  .addon-installed-row .addon-row-actions { grid-column: 2; justify-content: flex-end; }
+  .addon-card-title { flex-wrap: wrap; }
+}
 
 /* Player management */
 .players-panel { display: grid; gap: 14px; }

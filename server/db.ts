@@ -98,6 +98,24 @@ export function openDatabase(databasePath: string): SqliteDatabase {
     );
     CREATE INDEX IF NOT EXISTS addon_installs_server_idx ON addon_installs(server_id);
 
+    CREATE TABLE IF NOT EXISTS addon_pending_changes (
+      id TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL,
+      addon_type TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS addon_pending_server_idx ON addon_pending_changes(server_id,created_at);
+    CREATE TABLE IF NOT EXISTS addon_change_journals (
+      id TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS bridge_credentials (
       server_id TEXT PRIMARY KEY,
       token_hash TEXT NOT NULL,

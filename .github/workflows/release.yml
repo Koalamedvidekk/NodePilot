@@ -24,6 +24,8 @@ jobs:
         run: npx tsx --test server/test/update-handoff.test.ts server/test/update-process.test.ts server/test/windows-update-helper.test.ts
       - name: Test Minecraft version changes on Windows
         run: npx tsx --test server/test/server-version-service.test.ts server/test/version-runtime-integration.test.ts
+      - name: Test queued add-on changes and recovery on Windows
+        run: npx tsx --test server/test/addon-service.test.ts server/test/addon-change-service.test.ts
       - name: Test Worlds layouts, transfers and recovery on Windows
         run: npx tsx --test server/test/world-foundation.test.ts server/test/world-transfers-packs.test.ts server/test/world-routes.test.ts server/test/world-overlap.test.ts server/test/world-restore-transition.test.ts
       - name: Build and verify the Versions and Worlds APIs
@@ -31,6 +33,7 @@ jobs:
           npm run build -w server
           node scripts/test-versions-api.mjs
           node scripts/test-worlds-api.mjs
+          node scripts/test-addon-queue-api.mjs
 
   release:
     name: Test, package, and publish
@@ -72,6 +75,15 @@ jobs:
 
       - name: Verify the compiled Worlds API and ZIP round trip
         run: node scripts/test-worlds-api.mjs
+
+      - name: Verify queued add-ons through the compiled API
+        run: node scripts/test-addon-queue-api.mjs
+
+      - name: Verify add-on queue browser flows
+        run: |
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+          node scripts/test-addon-queue-ui.mjs
 
       - name: Create the verified updater package
         id: package

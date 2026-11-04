@@ -265,14 +265,42 @@ export interface AddonUpdate {
   message?: string;
 }
 
+export interface PendingAddonChange {
+  id: string;
+  serverId: string;
+  type: AddonType;
+  fileName: string;
+  originalFileName?: string;
+  action: 'install' | 'update' | 'remove';
+  name?: string;
+  version?: string;
+  source: AddonSource;
+  projectId?: string;
+  createdAt: string;
+  error?: string | null;
+}
+
+export interface AddonMutationResult {
+  addon?: AddonRecord;
+  backup?: string;
+  queued: boolean;
+  pendingChange?: PendingAddonChange;
+  restartRequired?: boolean;
+  missingDependencies?: string[];
+}
+
 export interface AddonList {
   plugins: AddonRecord[];
   mods: AddonRecord[];
+  pendingChanges: PendingAddonChange[];
+  pendingError?: string | null;
   capabilities: {
     plugins: boolean;
     mods: boolean;
     pluginMessage?: string;
     modMessage?: string;
+    canMutate?: boolean;
+    mutationMessage?: string;
   };
 }
 

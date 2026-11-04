@@ -3,11 +3,21 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEv
 import { ApiError, api } from '../api';
 import { CustomSelect } from '../components/CustomSelect';
 import { Icon } from '../components/Icon';
-import type { AddonCatalogResult, AddonList, AddonType, AddonUpdate, Server } from '../types';
+import type { AddonCatalogResult, AddonList, AddonMutationResult, AddonType, AddonUpdate, PendingAddonChange, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, titleCase } from '../utils';
 
 function updateKey(type: AddonType, fileName: string): string {
   return `${type}:${fileName.toLowerCase()}`;
+}
+
+function queuedLabel(action: PendingAddonChange['action']): string {
+  return action === 'remove' ? 'Removal queued' : action === 'update' ? 'Update queued' : 'Install queued';
+}
+
+function savedMessage(result: AddonMutationResult, name: string, action: 'installed' | 'uploaded' | 'updated' | 'removed'): string {
+  return result.queued
+    ? `${name}: ${queuedLabel(result.pendingChange?.action ?? (action === 'removed' ? 'remove' : action === 'updated' ? 'update' : 'install')).toLowerCase()} for the next server start or restart. Current JAR files have not changed.`
+    : `${name} was ${action} on disk.${action === 'removed' ? ' A backup was saved.' : ''} It takes effect when the server next starts.`;
 }
 
 function missingDependencyIds(cause: unknown): string[] {
@@ -33,24 +43,38 @@ export function AddonsPanel({ server }: { server: Server }) {
   const [results, setResults] = useState<AddonCatalogResult[]>([]);
   const [searching, setSearching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const loadSequence = useRef(0);
+  const loadInFlight = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(undefined);
+  const load = useCallback(async (silent = false, force = false) => {
+    if (silent && loadInFlight.current && !force) return;
+    loadInFlight.current = true;
+    const sequence = ++loadSequence.current;
+    if (!silent) { setLoading(true); setError(undefined); }
     try {
-      setData(await api.addons(server.id));
+      const next = await api.addons(server.id);
+      if (sequence === loadSequence.current) setData(next);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (sequence === loadSequence.current) setError(errorMessage(cause));
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) { loadInFlight.current = false; setLoading(false); }
     }
   }, [server.id]);
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => { void load(true); }, [load, server.status]);
+
+  useEffect(() => {
+    if (!data?.pendingChanges?.length && data?.capabilities.canMutate !== false) return;
+    const timer = setInterval(() => { if (!busy) void load(true); }, 3_000);
+    return () => clearInterval(timer);
+  }, [busy, data?.pendingChanges?.length, data?.capabilities.canMutate, load]);
+
   useEffect(() => {
     if (type === 'mod') setSource('modrinth');
-  }, [type]);
+    setResults([]); setUpdates([]); setQuery('');
+  }, [server.id, type]);
 
   useEffect(() => {
     if (!data) return;
@@ -66,7 +90,13 @@ export function AddonsPanel({ server }: { server: Server }) {
   const unavailableMessage = type === 'plugin' ? data?.capabilities.pluginMessage : data?.capabilities.modMessage;
   const installed = type === 'plugin' ? data?.plugins ?? [] : data?.mods ?? [];
   const updateByFile = new Map(updates.map((update) => [updateKey(update.type, update.fileName), update]));
-  const stopped = server.status === 'stopped';
+  const pending = data?.pendingChanges ?? [];
+  const stopped = server.status === 'stopped' || server.status === 'error';
+  const stableState = stopped || server.status === 'running';
+  const canMutate = stableState && data?.capabilities.canMutate !== false && (!server.installState || server.installState === 'ready');
+  const queuedMode = !stopped || pending.length > 0;
+  const pendingForFile = (fileName: string) => pending.find(change => change.type === type && [change.fileName, change.originalFileName].some(name => name && updateKey(type, name) === updateKey(type, fileName)));
+  const mutationMessage = data?.capabilities.mutationMessage ?? (!stableState ? `Wait until the server finishes ${server.status === 'starting' ? 'starting' : server.status === 'stopping' ? 'stopping' : 'its current operation'} before changing add-ons.` : server.installState && server.installState !== 'ready' ? 'Finish or repair the server installation before changing add-ons.' : data?.capabilities.canMutate === false ? 'Wait for the current add-on or server maintenance operation to finish.' : undefined);
 
   const search = async (event: FormEvent) => {
     event.preventDefault();
@@ -86,33 +116,35 @@ export function AddonsPanel({ server }: { server: Server }) {
   };
 
   const install = async (result: AddonCatalogResult) => {
-    if (!stopped || !result.compatible || !supported) return;
+    if (!canMutate || busy || !result.compatible || !supported) return;
     setBusy(`install:${result.projectId}`);
     setError(undefined);
     setNotice(undefined);
     try {
+      let response: AddonMutationResult;
       if (result.source === 'hangar') {
-        await api.installHangarAddon(server.id, result.projectId);
+        response = await api.installHangarAddon(server.id, result.projectId);
       } else {
         try {
-          await api.installModrinthAddon(server.id, type, result.projectId);
+          response = await api.installModrinthAddon(server.id, type, result.projectId);
         } catch (cause) {
           const dependencies = missingDependencyIds(cause);
-          if (!dependencies.length || !window.confirm(`This add-on requires ${dependencies.length} dependency${dependencies.length === 1 ? '' : 'ies'} that NodePilot cannot find locally. Install it anyway?\n\n${dependencies.join('\n')}`)) throw cause;
-          await api.installModrinthAddon(server.id, type, result.projectId, true);
+          if (!dependencies.length || !window.confirm(`This add-on requires ${dependencies.length} ${dependencies.length === 1 ? 'dependency' : 'dependencies'} that NodePilot cannot find locally. Install it anyway?\n\n${dependencies.join('\n')}`)) throw cause;
+          response = await api.installModrinthAddon(server.id, type, result.projectId, true);
         }
       }
-      setNotice(`${result.title} was installed. Start or restart the server before it loads.`);
+      setNotice(savedMessage(response, result.title, 'installed'));
       await load();
     } catch (cause) {
       setError(errorMessage(cause));
+      await load(true, true);
     } finally {
       setBusy(undefined);
     }
   };
 
   const chooseUpload = () => {
-    if (stopped && supported && !busy) fileInput.current?.click();
+    if (canMutate && supported && !busy) fileInput.current?.click();
   };
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -123,32 +155,36 @@ export function AddonsPanel({ server }: { server: Server }) {
       setError('Choose a .jar plugin or mod file.');
       return;
     }
-    if (!stopped || !supported) return;
+    if (!canMutate || busy || !supported) return;
     setBusy('upload');
     setError(undefined);
     setNotice(undefined);
     try {
-      await api.uploadAddon(server.id, type, file);
-      setNotice(`${file.name} was uploaded. Start or restart the server before it loads.`);
+      const response = await api.uploadAddon(server.id, type, file);
+      setNotice(savedMessage(response, file.name, 'uploaded'));
       await load();
     } catch (cause) {
       setError(errorMessage(cause));
+      await load(true, true);
     } finally {
       setBusy(undefined);
     }
   };
 
   const remove = async (fileName: string) => {
-    if (!stopped || !window.confirm(`Remove ${fileName}? NodePilot will create a backup before deleting the active copy.`)) return;
+    if (!canMutate || busy || pendingForFile(fileName) || !window.confirm(queuedMode
+      ? `Queue removal of ${fileName}? The current JAR stays in place until the next server start or restart. NodePilot will back it up before removal.`
+      : `Remove ${fileName}? NodePilot will back up the current JAR before deleting it.`)) return;
     setBusy(`remove:${fileName}`);
     setError(undefined);
     setNotice(undefined);
     try {
-      await api.removeAddon(server.id, type, fileName);
-      setNotice(`${fileName} was removed and backed up. Start or restart the server before the change takes effect.`);
+      const response = await api.removeAddon(server.id, type, fileName);
+      setNotice(savedMessage(response, fileName, 'removed'));
       await load();
     } catch (cause) {
       setError(errorMessage(cause));
+      await load(true, true);
     } finally {
       setBusy(undefined);
     }
@@ -170,19 +206,34 @@ export function AddonsPanel({ server }: { server: Server }) {
   };
 
   const update = async (fileName: string) => {
-    if (!stopped || !window.confirm(`Update ${fileName}? NodePilot will back up the current JAR first.`)) return;
+    if (!canMutate || busy || pendingForFile(fileName) || !window.confirm(queuedMode
+      ? `Queue an update for ${fileName}? The current JAR stays in place until the next server start or restart. NodePilot will back it up before applying the update.`
+      : `Update ${fileName}? NodePilot will back up the current JAR first.`)) return;
     setBusy(`update:${fileName}`);
     setError(undefined);
     setNotice(undefined);
     try {
-      await api.updateAddon(server.id, type, fileName);
-      setNotice(`${fileName} was updated. Start or restart the server before it loads.`);
-      await Promise.all([load(), checkUpdates()]);
+      const response = await api.updateAddon(server.id, type, fileName);
+      setNotice(savedMessage(response, fileName, 'updated'));
+      setUpdates(current => current.filter(entry => updateKey(entry.type, entry.fileName) !== updateKey(type, fileName)));
+      await load();
     } catch (cause) {
       setError(errorMessage(cause));
+      await load(true, true);
     } finally {
       setBusy(undefined);
     }
+  };
+
+  const cancelPending = async (change: PendingAddonChange) => {
+    if (!canMutate || busy) return;
+    setBusy(`cancel:${change.id}`); setError(undefined); setNotice(undefined);
+    try {
+      await api.cancelPendingAddon(server.id, change.id);
+      setNotice(`Cancelled the queued ${change.action === 'remove' ? 'removal' : change.action} for ${change.name ?? change.fileName}. Current JAR files were not changed.`);
+      await load();
+    } catch (cause) { setError(errorMessage(cause)); await load(true, true); }
+    finally { setBusy(undefined); }
   };
 
   return <section className="addons-panel panel management-panel">
@@ -195,8 +246,18 @@ export function AddonsPanel({ server }: { server: Server }) {
       <div className="panel-heading-actions"><button className="button button-secondary button-icon" type="button" onClick={() => void checkUpdates()} disabled={checkingUpdates || Boolean(busy)}><Icon name="refresh" size={16} /> {checkingUpdates ? 'Checking...' : 'Check updates'}</button><button className="button button-secondary button-icon" type="button" onClick={() => void load()} disabled={loading || Boolean(busy)}><Icon name="refresh" size={16} /> Refresh</button></div>
     </div>
     {error && <div className="inline-alert alert-error" role="alert"><Icon name="warning" size={18} /><div><strong>Add-on action failed.</strong><span>{error}</span></div><button type="button" className="text-button" onClick={() => setError(undefined)}>Dismiss</button></div>}
-    {notice && <div className="inline-alert alert-info" role="status"><Icon name="info" size={18} /><div><strong>Saved locally.</strong><span>{notice}</span></div><button type="button" className="text-button" onClick={() => setNotice(undefined)}>Dismiss</button></div>}
-    {!stopped && <div className="inline-alert alert-info"><Icon name="info" size={18} /><div><strong>Stop the server to change add-ons.</strong><span>Listing and update checks remain available, but install, upload, update, and removal are locked while it is active.</span></div></div>}
+    {notice && <div className="inline-alert alert-info" role="status"><Icon name="info" size={18} /><div><strong>Add-on status.</strong><span>{notice}</span></div><button type="button" className="text-button" onClick={() => setNotice(undefined)}>Dismiss</button></div>}
+    {!canMutate && mutationMessage && <div className="inline-alert alert-info"><Icon name="info" size={18} /><div><strong>Add-on changes are temporarily unavailable.</strong><span>{mutationMessage}</span></div></div>}
+    {stableState && !stopped && <div className="inline-alert alert-info"><Icon name="info" size={18} /><div><strong>Changes apply on the next start or restart.</strong><span>Install, upload, update, or remove add-ons while the server runs. NodePilot keeps the current JAR files unchanged and applies the queue before the next server start.</span></div></div>}
+    {data?.pendingError && <div className="inline-alert alert-error addon-pending-error" role="alert"><Icon name="warning" size={18} /><div><strong>Pending changes need attention.</strong><span>{data.pendingError}</span><span>Review this error before retrying a server start or cancelling a pending change.</span></div></div>}
+    {pending.length > 0 && <section className="addon-pending-card" aria-labelledby="addon-pending-heading">
+      <div className="addon-card-title"><div><h4 id="addon-pending-heading">Pending changes <span className="addon-pending-count">{pending.length}</span></h4><p>{stopped ? 'These changes are saved for the next start. Further changes join the same queue.' : 'These changes will apply before the next server start or restart.'} Backups are made before replacing or removing installed JARs.</p></div></div>
+      <div className="addon-pending-list">{pending.map(change => <article className="addon-pending-row" key={change.id}>
+        <div className="addon-file-icon"><Icon name={change.action === 'remove' ? 'trash' : 'box'} size={18} /></div>
+        <div className="addon-pending-copy"><strong>{change.name || change.fileName}</strong><span><span className={`addon-pending-badge is-${change.action}`}>{queuedLabel(change.action)}</span> {titleCase(change.type)}{change.version ? ` · v${change.version}` : ''}</span><small>{change.originalFileName && change.originalFileName !== change.fileName ? `${change.originalFileName} → ${change.fileName}` : change.fileName}</small><small>Queued {formatDate(change.createdAt)} · {titleCase(change.source)}</small>{change.error && change.error !== data?.pendingError && <em>{change.error}</em>}</div>
+        <button className="button button-secondary" type="button" onClick={() => void cancelPending(change)} disabled={!canMutate || Boolean(busy)} aria-label={`Cancel queued ${change.action === 'remove' ? 'removal' : change.action} of ${change.name || change.fileName}`}>{busy === `cancel:${change.id}` ? 'Cancelling...' : 'Cancel change'}</button>
+      </article>)}</div>
+    </section>}
     {hasDualSupport && (
       <div className="addon-type-tabs" role="tablist" aria-label="Add-on type">
         <button type="button" role="tab" aria-selected={type === 'plugin'} className={type === 'plugin' ? 'is-selected' : ''} onClick={() => setType('plugin')}>Plugins</button>
@@ -207,7 +268,7 @@ export function AddonsPanel({ server }: { server: Server }) {
       {!supported && <div className="addon-capability-note"><Icon name="circleHelp" size={18} /><div><strong>{type === 'plugin' ? 'Plugins are unavailable' : 'Mods are unavailable'}</strong><span>{unavailableMessage ?? 'NodePilot could not confirm this server supports this add-on type.'}</span></div></div>}
       <div className="addon-sections">
         <div className="addon-install-card">
-          <div className="addon-card-title"><div><h4>Find {type === 'plugin' ? 'plugins' : 'mods'}</h4><p>Search official catalogue APIs for this server version and software.</p></div><button className="button button-secondary" type="button" onClick={chooseUpload} disabled={!stopped || !supported || Boolean(busy)}><Icon name="plus" size={16} /> {type === 'plugin' ? 'Upload plugin JAR' : 'Upload mod JAR'}</button><input className="sr-only" ref={fileInput} type="file" accept=".jar,application/java-archive" onChange={(event) => void upload(event)} /></div>
+          <div className="addon-card-title"><div><h4>Find {type === 'plugin' ? 'plugins' : 'mods'}</h4><p>Search official catalogue APIs for this server version and software.</p></div><button className="button button-secondary" type="button" onClick={chooseUpload} disabled={!canMutate || !supported || Boolean(busy)}><Icon name="plus" size={16} /> {type === 'plugin' ? 'Upload plugin JAR' : 'Upload mod JAR'}</button><input className="sr-only" ref={fileInput} type="file" accept=".jar,application/java-archive" aria-label={type === 'plugin' ? 'Plugin JAR file' : 'Mod JAR file'} disabled={!canMutate || !supported || Boolean(busy)} onChange={(event) => void upload(event)} /></div>
           <form className="addon-search" onSubmit={(event) => void search(event)}>
             <input value={query} onChange={(event) => setQuery(event.target.value)} disabled={!supported || searching} placeholder={`Search ${type === 'plugin' ? 'Paper plugins' : `${titleCase(server.software)} mods`}`} maxLength={100} aria-label="Search add-ons" />
             {type === 'plugin' && (
@@ -272,11 +333,11 @@ export function AddonsPanel({ server }: { server: Server }) {
                     <button
                       className="button button-primary addon-install-btn"
                       type="button"
-                      disabled={!stopped || !result.compatible || !supported || Boolean(busy)}
+                      disabled={!canMutate || !result.compatible || !supported || Boolean(busy) || pending.some(change => change.type === type && change.source === result.source && change.projectId === result.projectId)}
                       onClick={() => void install(result)}
                     >
                       <Icon name="plus" size={15} />
-                      {busy === `install:${result.projectId}` ? 'Installing…' : 'Install'}
+                      {busy === `install:${result.projectId}` ? (queuedMode ? 'Queuing…' : 'Installing…') : pending.some(change => change.type === type && change.source === result.source && change.projectId === result.projectId) ? 'Queued' : queuedMode ? 'Queue install' : 'Install'}
                     </button>
                     <a className="addon-details-link" href={result.url} target="_blank" rel="noreferrer">
                       Details <Icon name="arrowUpRight" size={13} />
@@ -289,10 +350,11 @@ export function AddonsPanel({ server }: { server: Server }) {
           {!searching && query && results.length === 0 && <p className="addon-search-empty">Search results will appear here after a successful search.</p>}
         </div>
         <div className="addon-list-card">
-          <div className="addon-card-title"><div><h4>Installed {type === 'plugin' ? 'plugins' : 'mods'}</h4><p>{installed.length ? `${installed.length} JAR${installed.length === 1 ? '' : 's'} found in this server directory.` : 'No JAR files found in this add-on directory.'}</p></div></div>
+          <div className="addon-card-title"><div><h4>Installed {type === 'plugin' ? 'plugins' : 'mods'}</h4><p>{installed.length ? `${installed.length} current JAR${installed.length === 1 ? '' : 's'} on disk. Pending changes are listed separately.` : 'No JAR files found in this add-on directory.'}</p></div></div>
           <div className="addon-installed-list">{installed.map((addon) => {
             const updateInfo = updateByFile.get(updateKey(type, addon.fileName));
-            return <article className="addon-installed-row" key={addon.fileName}><div className="addon-file-icon"><Icon name="box" size={18} /></div><div className="addon-installed-copy"><strong>{addon.metadata?.name || addon.fileName}</strong><span>{addon.metadata?.version ? `v${addon.metadata.version} · ` : ''}{formatBytes(addon.size)} · {titleCase(addon.source)}</span><small>{addon.fileName} · changed {formatDate(addon.modifiedAt)}</small>{!addon.compatible && <em>{addon.compatibilityMessage ?? 'NodePilot could not confirm compatibility.'}</em>}{updateInfo?.message && <em>{updateInfo.message}</em>}{updateInfo?.available && <em className="addon-update-available">Update available: {updateInfo.versionName ?? 'new version'}</em>}</div><div className="addon-row-actions">{updateInfo?.available && <button className="button button-secondary" type="button" disabled={!stopped || Boolean(busy)} onClick={() => void update(addon.fileName)}>{busy === `update:${addon.fileName}` ? 'Updating...' : 'Update'}</button>}<button className="icon-button destructive-soft" type="button" title={`Remove ${addon.fileName}`} aria-label={`Remove ${addon.fileName}`} disabled={!stopped || Boolean(busy)} onClick={() => void remove(addon.fileName)}><Icon name="trash" size={16} /></button></div></article>;
+            const pendingChange = pendingForFile(addon.fileName);
+            return <article className="addon-installed-row" key={addon.fileName}><div className="addon-file-icon"><Icon name="box" size={18} /></div><div className="addon-installed-copy"><strong>{addon.metadata?.name || addon.fileName}</strong><span>{addon.metadata?.version ? `v${addon.metadata.version} · ` : ''}{formatBytes(addon.size)} · {titleCase(addon.source)}</span><small>{addon.fileName} · changed {formatDate(addon.modifiedAt)}</small>{pendingChange && <span className={`addon-pending-badge is-${pendingChange.action}`}>{queuedLabel(pendingChange.action)} · cancel it above to change this file again</span>}{!addon.compatible && <em>{addon.compatibilityMessage ?? 'NodePilot could not confirm compatibility.'}</em>}{updateInfo?.message && <em>{updateInfo.message}</em>}{updateInfo?.available && !pendingChange && <em className="addon-update-available">Update available: {updateInfo.versionName ?? 'new version'}</em>}</div><div className="addon-row-actions">{updateInfo?.available && <button className="button button-secondary" type="button" disabled={!canMutate || !supported || Boolean(busy) || Boolean(pendingChange)} onClick={() => void update(addon.fileName)}>{busy === `update:${addon.fileName}` ? 'Queuing...' : queuedMode ? 'Queue update' : 'Update'}</button>}<button className="icon-button destructive-soft" type="button" title={`Remove ${addon.fileName}`} aria-label={`Remove ${addon.fileName}`} disabled={!canMutate || !supported || Boolean(busy) || Boolean(pendingChange)} onClick={() => void remove(addon.fileName)}><Icon name="trash" size={16} /></button></div></article>;
           })}</div>
           {!installed.length && <div className="addon-empty"><Icon name="box" size={24} /><span>{supported ? `Search a catalogue or upload a compatible ${type === 'plugin' ? 'plugin' : 'mod'} JAR.` : 'Existing files are listed here, but this server software cannot load this type.'}</span></div>}
         </div>

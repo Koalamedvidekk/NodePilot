@@ -143,7 +143,7 @@ export class ServerVersionService {
     private readonly servers: ServerRepository,
     private readonly minecraft: VersionMinecraftService,
     private readonly java: Pick<JavaService, 'findUsable'>,
-    private readonly runtime: { isProcessActive(id: string): boolean },
+    private readonly runtime: { isProcessActive(id: string): boolean; versionChangeBlockedReason?(id: string): string | null },
     private readonly settings: ServerVersionRepository,
     private readonly shouldPause: () => boolean = () => false,
   ) {}
@@ -179,6 +179,8 @@ export class ServerVersionService {
   private supported(server: ServerRecord): boolean { return SUPPORTED.has(server.software); }
 
   private assertStopped(server: ServerRecord): void {
+    const blockedReason = this.runtime.versionChangeBlockedReason?.(server.id);
+    if (blockedReason) throw new AppError(409, 'pending_addon_changes', blockedReason);
     if (this.runtime.isProcessActive(server.id) || ['starting', 'running', 'stopping', 'installing'].includes(server.status)) {
       throw new AppError(409, 'server_active', 'Stop the server before changing its Minecraft version. Automatic updates wait until it is stopped.');
     }
@@ -200,6 +202,7 @@ export class ServerVersionService {
     if (!isStableMinecraftVersion(server.version)) blockedReason = 'Automatic updates require a normal numeric Minecraft release version.';
     if (server.installState !== 'ready') blockedReason = server.lastError ?? 'The server installation is not ready. Resolve its installation error before enabling automatic updates.';
     if (!supported) blockedReason = 'This imported or unknown server software does not have a supported installer.';
+    blockedReason = this.runtime.versionChangeBlockedReason?.(id) ?? blockedReason;
     return {
       serverId: id, currentVersion: server.version, software: server.software, versions,
       latestVersion: settings.latestVersion,

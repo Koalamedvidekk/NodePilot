@@ -139,6 +139,43 @@ test('runtime reserves a start during world validation and releases it on failur
   assert.equal(repository.require(server.id).status, 'offline');
 });
 
+test('pending add-on preparation runs after launch validation and a failed application never spawns a child', async (t) => {
+  const { root, repository, server } = await fixture(t);
+  await mkdir(path.join(root, server.directory));
+  const runtime = new ServerRuntime(repository, root);
+  let preparations = 0;
+  runtime.setBeforeLaunch(async () => {
+    preparations++;
+    assert.equal(runtime.isProcessActive(server.id), true, 'The start remains reserved during add-on application.');
+    assert.equal(runtime.hasProcess(server.id), false, 'No game process may exist while add-on JARs change.');
+    throw new AppError(409, 'addon_apply_failed', 'Queued add-on failed validation.');
+  });
+  await assert.rejects(runtime.start(server, process.execPath));
+  assert.equal(preparations, 0, 'Missing launch files must leave the add-on queue untouched.');
+  await writeFile(path.join(root, server.directory, 'server.jar'), 'fixture jar');
+  await assert.rejects(runtime.start(server), { code: 'java_missing' });
+  assert.equal(preparations, 0, 'Missing Java must leave the add-on queue untouched.');
+  await assert.rejects(runtime.start(server, 'must-never-be-launched'), { code: 'addon_apply_failed' });
+  assert.equal(preparations, 1);
+  assert.equal(runtime.isProcessActive(server.id), false);
+  assert.equal(runtime.hasProcess(server.id), false);
+  assert.equal(repository.require(server.id).status, 'offline');
+});
+
+test('runtime rechecks server configuration after asynchronous add-on preparation', async (t) => {
+  const { root, repository, server } = await fixture(t);
+  await mkdir(path.join(root, server.directory));
+  await writeFile(path.join(root, server.directory, 'server.jar'), 'fixture jar');
+  const runtime = new ServerRuntime(repository, root);
+  runtime.setBeforeLaunch(async () => {
+    await Promise.resolve();
+    repository.updateVersion(server.id, { version: '1.21.4', startupConfig: server.startupConfig });
+  });
+  await assert.rejects(runtime.start(server, 'must-never-be-launched'), { code: 'server_version_changed' });
+  assert.equal(runtime.isProcessActive(server.id), false);
+  assert.equal(repository.require(server.id).status, 'offline');
+});
+
 test('auto-wake refuses Java selected for a version replaced during discovery', async (t) => {
   const { database, repository, server } = await fixture(t);
   let resolveJava!: (value: unknown) => void;

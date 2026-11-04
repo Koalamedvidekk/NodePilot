@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -10,6 +10,9 @@ import { AppError, errorMessage } from '../lib/errors.js';
 import { resolveManagedServerRoot } from '../lib/paths.js';
 import type { ServerRecord, ServerSoftware } from '../types.js';
 import { inspectJar, type JarMetadata } from './jar-inspection.js';
+import { AddonChangeService, type AddonChangeOptions, type AddonMutationResult } from './addon-change-service.js';
+import type { PendingAddonChange } from '../repositories/addon-pending-repository.js';
+export type { PendingAddonChange } from '../repositories/addon-pending-repository.js';
 
 export type AddonType = 'plugin' | 'mod';
 export type AddonSource = 'modrinth' | 'hangar' | 'upload' | 'import';
@@ -106,14 +109,6 @@ const HANGAR_API = 'https://hangar.papermc.io/api/v1';
 const DOWNLOAD_LIMIT = 256 * 1024 * 1024;
 const API_TIMEOUT_MS = 30_000;
 
-function stableTimeKey(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-');
-}
-
-function isActive(server: ServerRecord): boolean {
-  return ['starting', 'running', 'stopping'].includes(server.status);
-}
-
 function compareNumericVersions(left: string, right: string): number {
   const parts = (value: string) => value.split(/[._-]/).map((part) => Number.parseInt(part, 10)).filter(Number.isFinite);
   const leftParts = parts(left);
@@ -166,10 +161,6 @@ export function addonCompatibility(type: AddonType, server: Pick<ServerRecord, '
     return { compatible: false, message: `This JAR is detected as ${metadata.loader ?? metadata.software}, but the server uses ${server.software}.` };
   }
   return { compatible: true };
-}
-
-function assertNotActive(server: ServerRecord): void {
-  if (isActive(server)) throw new AppError(409, 'server_active', 'Stop the server before installing, updating, uploading, or removing add-ons.');
 }
 
 function assertTypeSupported(type: AddonType, server: ServerRecord): void {
@@ -231,11 +222,17 @@ async function readJson<T>(url: string, hosts: Set<string>): Promise<T> {
     throw new AppError(503, 'addon_catalog_unavailable', 'Could not reach the add-on catalogue.');
   }
   if (!response.ok) throw new AppError(502, 'addon_catalog_failed', `The add-on catalogue returned HTTP ${response.status}.`);
+  if(!response.body)throw new AppError(502,'addon_catalog_invalid','The add-on catalogue returned no metadata.');
+  const stream=Readable.fromWeb(response.body as never);
+  const timer=setTimeout(()=>stream.destroy(new AppError(504,'addon_catalog_timeout','The add-on catalogue metadata timed out.')),API_TIMEOUT_MS);
   try {
-    return await response.json() as T;
-  } catch {
+    const chunks:Buffer[]=[];let bytes=0;
+    for await(const value of stream){const chunk=Buffer.from(value);bytes+=chunk.length;if(bytes>2*1024*1024)throw new AppError(502,'addon_catalog_too_large','The add-on catalogue metadata is too large.');chunks.push(chunk);}
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+  } catch(error) {
+    if(error instanceof AppError)throw error;
     throw new AppError(502, 'addon_catalog_invalid', 'The add-on catalogue returned invalid data.');
-  }
+  } finally{clearTimeout(timer);stream.destroy();}
 }
 
 async function downloadToFile(
@@ -261,7 +258,7 @@ async function downloadToFile(
     },
   });
   try {
-    await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination, { flags: 'wx' }));
+    await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination, { flags: 'wx' }),{signal:AbortSignal.timeout(5*60_000)});
     if (!bytes) throw new AppError(502, 'addon_download_empty', 'The add-on download was empty.');
     if (checksum?.value && hash?.digest('hex').toLowerCase() !== checksum.value.toLowerCase()) {
       throw new AppError(502, 'addon_checksum_failed', 'The downloaded add-on did not match the publisher checksum.');
@@ -290,28 +287,25 @@ function hangarIdentifier(value: string): { owner: string; slug: string } {
 }
 
 export class AddonService {
+  private readonly changes:AddonChangeService;
   constructor(
-    private readonly serversDirectory: string,
-    private readonly backupsDirectory: string,
-    private readonly database: SqliteDatabase,
-  ) {}
+    private readonly serversDirectory:string,
+    private readonly backupsDirectory:string,
+    private readonly database:SqliteDatabase,
+    options:AddonChangeOptions={},
+  ){this.changes=new AddonChangeService(serversDirectory,backupsDirectory,database,options);}
+  isBusy(id:string):boolean{return this.changes.isBusy(id);}
+  anyBusy():boolean{return this.changes.anyBusy();}
+  hasPending(id:string):boolean{return this.changes.hasPending(id);}
+  hasRecoveryBlock(id:string):boolean{return this.changes.hasRecoveryBlock(id);}
+  applyPending(server:ServerRecord):Promise<void>{return this.changes.applyPending(server);}
+  recover():Promise<void>{return this.changes.recover();}
+  cancelPending(server:ServerRecord,id:string):Promise<void>{return this.changes.cancelPending(server,id);}
+  discardForDeletedServer(server:ServerRecord):Promise<void>{return this.changes.discardForDeletedServer(server);}
+  stop():Promise<void>{return this.changes.stop();}
 
   private rows(serverId: string): StoredAddon[] {
     return this.database.prepare('SELECT * FROM addon_installs WHERE server_id = ?').all(serverId) as StoredAddon[];
-  }
-
-  private upsert(serverId: string, type: AddonType, fileName: string, source: AddonSource, projectId?: string, versionId?: string): void {
-    const now = new Date().toISOString();
-    this.database.prepare(`
-      INSERT INTO addon_installs (server_id, addon_type, file_name, source, project_id, version_id, installed_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(server_id, addon_type, file_name) DO UPDATE SET
-        source = excluded.source, project_id = excluded.project_id, version_id = excluded.version_id, updated_at = excluded.updated_at
-    `).run(serverId, type, fileName, source, projectId ?? null, versionId ?? null, now, now);
-  }
-
-  private deleteStored(serverId: string, type: AddonType, fileName: string): void {
-    this.database.prepare('DELETE FROM addon_installs WHERE server_id = ? AND addon_type = ? AND file_name = ?').run(serverId, type, fileName);
   }
 
   private async serverRoot(server: ServerRecord): Promise<string> {
@@ -339,60 +333,12 @@ export class AddonService {
     return directory;
   }
 
-  private async backupExisting(server: ServerRecord, type: AddonType, target: string): Promise<string | undefined> {
-    try {
-      const metadata = await lstat(target);
-      if (!metadata.isFile() || metadata.isSymbolicLink()) throw new AppError(400, 'unsafe_addon_file', 'NodePilot refused to replace a linked or non-regular add-on file.');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw error;
-    }
-    const backupDirectory = path.join(this.backupsDirectory, server.id, stableTimeKey(), type);
-    await mkdir(backupDirectory, { recursive: true });
-    const backup = path.join(backupDirectory, path.basename(target));
-    await copyFile(target, backup, 0);
-    return backup;
+  private deploy(server:ServerRecord,type:AddonType,stagedPath:string,source:AddonSource,projectId?:string,versionId?:string,originalFileName?:string):Promise<AddonMutationResult>{
+    const previous=originalFileName??(projectId?this.rows(server.id).find(row=>row.addon_type===type&&row.source===source&&row.project_id===projectId)?.file_name:undefined);
+    return this.changes.submit(server,type,stagedPath,safeAddonFileName(path.basename(stagedPath)),source,projectId,versionId,previous);
   }
 
-  private async deploy(server: ServerRecord, type: AddonType, stagedPath: string, source: AddonSource, projectId?: string, versionId?: string): Promise<{ addon: AddonRecord; backup?: string }> {
-    assertNotActive(server);
-    assertTypeSupported(type, server);
-    const metadata = await inspectJar(stagedPath);
-    const fileName = safeAddonFileName(path.basename(stagedPath));
-    const compatibility = addonCompatibility(type, server, metadata);
-    if (!compatibility.compatible) throw new AppError(422, 'addon_incompatible', compatibility.message ?? 'The add-on is incompatible with this server.');
-    const directory = await this.addonDirectory(server, type, true);
-    const target = path.join(directory, fileName);
-    const targetMeta = await lstat(directory);
-    if (!targetMeta.isDirectory() || targetMeta.isSymbolicLink()) throw new AppError(500, 'unsafe_addon_directory', 'NodePilot refused an unsafe add-on directory.');
-    const backup = await this.backupExisting(server, type, target);
-    const temporary = `${target}.nodepilot-${randomUUID()}.tmp`;
-    try {
-      await copyFile(stagedPath, temporary, 0);
-      await rm(target, { force: true });
-      await rename(temporary, target);
-      this.upsert(server.id, type, fileName, source, projectId, versionId);
-      const details = await stat(target);
-      return {
-        addon: {
-          type,
-          fileName,
-          size: details.size,
-          modifiedAt: details.mtime.toISOString(),
-          source,
-          projectId,
-          versionId,
-          metadata: { name: metadata.name, version: metadata.version, software: metadata.software, apiVersion: metadata.apiVersion, loader: metadata.loader },
-          compatible: true,
-        },
-        backup,
-      };
-    } finally {
-      await rm(temporary, { force: true }).catch(() => undefined);
-    }
-  }
-
-  async list(server: ServerRecord): Promise<{ plugins: AddonRecord[]; mods: AddonRecord[]; capabilities: { plugins: boolean; mods: boolean; pluginMessage?: string; modMessage?: string } }> {
+  async list(server: ServerRecord): Promise<{ plugins: AddonRecord[]; mods: AddonRecord[]; pendingChanges:PendingAddonChange[]; pendingError:string|null; capabilities: { plugins: boolean; mods: boolean; pluginMessage?: string; modMessage?: string; canMutate:boolean; mutationMessage?:string } }> {
     const known = new Map(this.rows(server.id).map((row) => [`${row.addon_type}:${row.file_name.toLowerCase()}`, row]));
     const scan = async (type: AddonType): Promise<AddonRecord[]> => {
       const directory = await this.addonDirectory(server, type, false);
@@ -429,7 +375,7 @@ export class AddonService {
     const [plugins, mods] = await Promise.all([scan('plugin'), scan('mod')]);
     const pluginMessage = requiredSoftwareForType('plugin', server.software);
     const modMessage = requiredSoftwareForType('mod', server.software);
-    return { plugins, mods, capabilities: { plugins: !pluginMessage, mods: !modMessage, pluginMessage, modMessage } };
+    return { plugins, mods, pendingChanges:this.changes.list(server.id),pendingError:this.changes.pendingError(server.id),capabilities: { plugins: !pluginMessage, mods: !modMessage, pluginMessage, modMessage,...this.changes.capabilities(server) } };
   }
 
   async search(server: ServerRecord, type: AddonType, source: 'modrinth' | 'hangar', query: string): Promise<AddonCatalogResult[]> {
@@ -494,38 +440,31 @@ export class AddonService {
     const file = version?.files?.find((candidate) => candidate.primary && candidate.url && candidate.filename && /\.jar$/i.test(candidate.filename))
       ?? version?.files?.find((candidate) => candidate.url && candidate.filename && /\.jar$/i.test(candidate.filename));
     if (!version || !file?.url || !file.filename) throw new AppError(422, 'addon_version_unavailable', `Modrinth has no compatible ${type} JAR for ${server.version} and ${modrinthLoader(type, server)}.`);
-    const installed = new Set(this.rows(server.id).map((row) => row.project_id).filter((value): value is string => Boolean(value)));
+    const queued=this.changes.list(server.id).filter(change=>change.type===type);
+    const removed=new Set(queued.filter(change=>change.action==='remove').map(change=>change.fileName.toLowerCase()));
+    const installed=new Set([...this.rows(server.id).filter(row=>row.addon_type===type&&!removed.has(row.file_name.toLowerCase())).map(row=>row.project_id),...queued.filter(change=>change.action!=='remove').map(change=>change.projectId)].filter((value):value is string=>Boolean(value)));
     const missingDependencies = (version.dependencies ?? [])
       .filter((dependency) => dependency.dependency_type === 'required' && dependency.project_id && !installed.has(dependency.project_id))
       .map((dependency) => dependency.project_id as string);
     return { version, file, missingDependencies };
   }
 
-  async installModrinth(server: ServerRecord, type: AddonType, projectId: string, allowMissingDependencies = false): Promise<{ addon: AddonRecord; backup?: string; missingDependencies: string[] }> {
-    assertNotActive(server);
-    assertTypeSupported(type, server);
-    const result = await this.modrinthVersion(server, type, projectId);
-    if (result.missingDependencies.length && !allowMissingDependencies) {
-      throw new AppError(409, 'missing_dependencies', 'This add-on declares required dependencies that are not installed.', { missingDependencies: result.missingDependencies });
-    }
-    const fileName = safeAddonFileName(result.file.filename ?? 'addon.jar');
-    const staging = path.join(this.backupsDirectory, '.staging');
-    await mkdir(staging, { recursive: true });
-    const stagedPath = path.join(staging, `${randomUUID()}-${fileName}`);
-    try {
-      const checksum = result.file.hashes?.sha512
-        ? { algorithm: 'sha512' as const, value: result.file.hashes.sha512 }
-        : result.file.hashes?.sha1 ? { algorithm: 'sha1' as const, value: result.file.hashes.sha1 } : undefined;
-      if (!checksum) throw new AppError(502, 'addon_checksum_missing', 'Modrinth did not provide a checksum for this add-on file.');
-      await downloadToFile(result.file.url as string, stagedPath, checksum);
-      const stagedName = path.join(staging, fileName);
-      await rename(stagedPath, stagedName);
-      const deployed = await this.deploy(server, type, stagedName, 'modrinth', projectIdentifier(projectId), result.version.id);
-      return { ...deployed, missingDependencies: result.missingDependencies };
-    } finally {
-      await rm(stagedPath, { force: true }).catch(() => undefined);
-      await rm(path.join(staging, fileName), { force: true }).catch(() => undefined);
-    }
+  async installModrinth(server:ServerRecord,type:AddonType,projectId:string,allowMissingDependencies=false):Promise<AddonMutationResult&{missingDependencies:string[]}>{
+    return this.changes.mutate(server,current=>this.performModrinth(current,type,projectId,allowMissingDependencies));
+  }
+  private async performModrinth(server:ServerRecord,type:AddonType,projectId:string,allowMissingDependencies=false,originalFileName?:string):Promise<AddonMutationResult&{missingDependencies:string[]}>{
+    assertTypeSupported(type,server);
+    const result=await this.modrinthVersion(server,type,projectId);
+    if(result.missingDependencies.length&&!allowMissingDependencies)throw new AppError(409,'missing_dependencies','This add-on declares required dependencies that are not installed or queued.',{missingDependencies:result.missingDependencies});
+    const fileName=safeAddonFileName(result.file.filename??'addon.jar');
+    const staging=await this.changes.stageDirectory();const stagedPath=path.join(staging,fileName);
+    try{
+      const checksum=result.file.hashes?.sha512?{algorithm:'sha512' as const,value:result.file.hashes.sha512}:result.file.hashes?.sha1?{algorithm:'sha1' as const,value:result.file.hashes.sha1}:undefined;
+      if(!checksum)throw new AppError(502,'addon_checksum_missing','Modrinth did not provide a checksum for this add-on file.');
+      await downloadToFile(result.file.url as string,stagedPath,checksum);
+      const deployed=await this.deploy(server,type,stagedPath,'modrinth',projectIdentifier(projectId),result.version.id,originalFileName);
+      return{...deployed,missingDependencies:result.missingDependencies};
+    }finally{await this.changes.removeStage(staging);}
   }
 
   private async hangarVersion(server: ServerRecord, projectId: string): Promise<{ version: HangarVersion; downloadUrl: string; fileName: string }> {
@@ -548,60 +487,36 @@ export class AddonService {
     return { version: candidate, downloadUrl, fileName };
   }
 
-  async installHangar(server: ServerRecord, projectId: string): Promise<{ addon: AddonRecord; backup?: string }> {
-    assertNotActive(server);
-    assertTypeSupported('plugin', server);
-    assertHangarCompatible(server);
-    const result = await this.hangarVersion(server, projectId);
-    const staging = path.join(this.backupsDirectory, '.staging');
-    await mkdir(staging, { recursive: true });
-    const stagedPath = path.join(staging, `${randomUUID()}-${result.fileName}`);
-    try {
-      const hashes = result.version.downloads?.PAPER?.fileInfo?.hashes;
-      const checksum = hashes?.sha256
-        ? { algorithm: 'sha256' as const, value: hashes.sha256 }
-        : hashes?.sha1 ? { algorithm: 'sha1' as const, value: hashes.sha1 } : undefined;
-      await downloadToFile(result.downloadUrl, stagedPath, checksum);
-      const stagedName = path.join(staging, result.fileName);
-      await rename(stagedPath, stagedName);
-      return await this.deploy(server, 'plugin', stagedName, 'hangar', projectId, result.version.name);
-    } finally {
-      await rm(stagedPath, { force: true }).catch(() => undefined);
-      await rm(path.join(staging, result.fileName), { force: true }).catch(() => undefined);
-    }
+  async installHangar(server:ServerRecord,projectId:string):Promise<AddonMutationResult>{
+    return this.changes.mutate(server,current=>this.performHangar(current,projectId));
+  }
+  private async performHangar(server:ServerRecord,projectId:string,originalFileName?:string):Promise<AddonMutationResult>{
+    assertTypeSupported('plugin',server);assertHangarCompatible(server);
+    const result=await this.hangarVersion(server,projectId);
+    const staging=await this.changes.stageDirectory();const stagedPath=path.join(staging,result.fileName);
+    try{
+      const hashes=result.version.downloads?.PAPER?.fileInfo?.hashes;
+      const checksum=hashes?.sha256?{algorithm:'sha256' as const,value:hashes.sha256}:hashes?.sha1?{algorithm:'sha1' as const,value:hashes.sha1}:undefined;
+      await downloadToFile(result.downloadUrl,stagedPath,checksum);
+      return await this.deploy(server,'plugin',stagedPath,'hangar',projectId,result.version.name,originalFileName);
+    }finally{await this.changes.removeStage(staging);}
   }
 
-  async installUpload(server: ServerRecord, type: AddonType, uploadPath: string, sourceName: string): Promise<{ addon: AddonRecord; backup?: string }> {
-    assertNotActive(server);
-    assertTypeSupported(type, server);
-    const fileName = safeAddonFileName(sourceName);
-    const staging = path.join(this.backupsDirectory, '.staging');
-    await mkdir(staging, { recursive: true });
-    const stagedPath = path.join(staging, `${randomUUID()}-${fileName}`);
-    try {
-      const details = await stat(uploadPath);
-      if (!details.isFile() || details.size === 0 || details.size > DOWNLOAD_LIMIT) throw new AppError(413, 'addon_too_large', 'Uploaded add-ons must be non-empty JAR files up to 256 MB.');
-      await copyFile(uploadPath, stagedPath, 0);
-      const stagedName = path.join(staging, fileName);
-      await rename(stagedPath, stagedName);
-      return await this.deploy(server, type, stagedName, 'upload');
-    } finally {
-      await rm(stagedPath, { force: true }).catch(() => undefined);
-      await rm(path.join(staging, fileName), { force: true }).catch(() => undefined);
-    }
+  async installUpload(server:ServerRecord,type:AddonType,uploadPath:string,sourceName:string):Promise<AddonMutationResult>{
+    return this.changes.mutate(server,async current=>{
+      assertTypeSupported(type,current);const fileName=safeAddonFileName(sourceName);
+      const staging=await this.changes.stageDirectory();const stagedPath=path.join(staging,fileName);
+      try{
+        const details=await lstat(uploadPath);
+        if(!details.isFile()||details.isSymbolicLink()||details.size===0||details.size>DOWNLOAD_LIMIT)throw new AppError(413,'addon_too_large','Uploaded add-ons must be non-empty regular JAR files up to 256 MB.');
+        await copyFile(uploadPath,stagedPath,0);
+        return await this.deploy(current,type,stagedPath,'upload');
+      }finally{await this.changes.removeStage(staging);}
+    });
   }
 
-  async remove(server: ServerRecord, type: AddonType, fileName: string): Promise<{ backup: string }> {
-    assertNotActive(server);
-    assertTypeSupported(type, server);
-    const safeName = safeAddonFileName(fileName);
-    const directory = await this.addonDirectory(server, type, false);
-    const target = path.join(directory, safeName);
-    const backup = await this.backupExisting(server, type, target);
-    if (!backup) throw new AppError(404, 'addon_not_found', 'That add-on file no longer exists.');
-    await rm(target, { force: false });
-    this.deleteStored(server.id, type, safeName);
-    return { backup };
+  async remove(server:ServerRecord,type:AddonType,fileName:string):Promise<AddonMutationResult>{
+    return this.changes.mutate(server,current=>{assertTypeSupported(type,current);return this.changes.remove(current,type,fileName);});
   }
 
   async checkUpdates(server: ServerRecord): Promise<AddonUpdate[]> {
@@ -623,14 +538,12 @@ export class AddonService {
     }));
   }
 
-  async update(server: ServerRecord, type: AddonType, fileName: string): Promise<{ addon: AddonRecord; backup?: string }> {
-    const safeName = safeAddonFileName(fileName);
-    const row = this.rows(server.id).find((item) => item.addon_type === type && item.file_name.toLowerCase() === safeName.toLowerCase());
-    if (!row || !row.project_id || (row.source !== 'modrinth' && row.source !== 'hangar')) {
-      throw new AppError(422, 'addon_update_unavailable', 'This add-on was not installed from a supported catalogue, so NodePilot cannot safely look up an update.');
-    }
-    return row.source === 'modrinth'
-      ? this.installModrinth(server, type, row.project_id, true)
-      : this.installHangar(server, row.project_id);
+  async update(server:ServerRecord,type:AddonType,fileName:string):Promise<AddonMutationResult>{
+    return this.changes.mutate(server,async current=>{
+      const safeName=safeAddonFileName(fileName);
+      const row=this.rows(current.id).find(item=>item.addon_type===type&&item.file_name.toLowerCase()===safeName.toLowerCase());
+      if(!row||!row.project_id||(row.source!=='modrinth'&&row.source!=='hangar'))throw new AppError(422,'addon_update_unavailable','This add-on was not installed from a supported catalogue, so NodePilot cannot safely look up an update.');
+      return row.source==='modrinth'?this.performModrinth(current,type,row.project_id,true,row.file_name):this.performHangar(current,row.project_id,row.file_name);
+    });
   }
 }

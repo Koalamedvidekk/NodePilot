@@ -366,29 +366,52 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const runtime = new ServerRuntime(repository, config.serversDirectory, settingsRepository);
   const serverMutationCounts = new Map<string, number>();
   let worlds: WorldService;
+  let addons: AddonService;
   const versionSettings = new ServerVersionRepository(database);
   const serverVersions = new ServerVersionService(
     { serversDirectory: config.serversDirectory, backupsDirectory: config.backupsDirectory },
     repository, minecraft, java,
-    { isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) },
+    {
+      isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasPending(id)) || Boolean(addons?.hasRecoveryBlock(id)),
+      versionChangeBlockedReason: (id) => addons?.hasPending(id) || addons?.hasRecoveryBlock(id)
+        ? 'Minecraft version changes are paused until queued add-ons have been applied by a server start, or cancelled in Plugins or Mods.' : null,
+    },
     versionSettings,
     () => updates.isMaintenanceActive(),
   );
   worlds = new WorldService(config, repository, new WorldRepository(database), {
-    isProcessActive: (id) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || serverVersions.isBusy(id),
+    isProcessActive: (id) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || serverVersions.isBusy(id) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasRecoveryBlock(id)),
   }, () => updates.isMaintenanceActive());
   await worlds.recover();
+  addons = new AddonService(config.serversDirectory, config.backupsDirectory, database, {
+    dataDirectory: config.dataDirectory,
+    getServer: (id) => repository.require(id),
+    isProcessActive: (id) => runtime.hasProcess(id),
+    assertCanMutate: (id) => {
+      if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
+      worlds.assertCanStart(id);
+      if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'Wait for this server to finish changing Minecraft versions.');
+      if ((serverMutationCounts.get(id) ?? 0) > 0) throw new AppError(409, 'server_maintenance_in_progress', 'Another server change is in progress. Retry when it finishes.');
+      const current = repository.require(id);
+      if (current.installState !== 'ready' || ['starting', 'stopping', 'installing'].includes(current.status) || runtime.isProcessActive(id) && !runtime.hasProcess(id)) {
+        throw new AppError(409, 'server_transitioning', 'Wait until the server has finished starting or stopping before changing add-ons.');
+      }
+    },
+  });
+  await addons.recover();
   runtime.setStartGuard((id) => {
     if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
     if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
     worlds.assertCanStart(id);
+    if (addons.isBusy(id)) throw new AppError(409, 'addon_change_in_progress', 'Wait for the current add-on change to finish before starting the server.');
+    if (addons.hasRecoveryBlock(id)) throw new AppError(409, 'addon_recovery_required', 'An interrupted add-on change needs recovery before this server can start. Check its Plugins or Mods tab.');
   });
   runtime.setStartValidation((id) => worlds.validateStart(id));
+  runtime.setBeforeLaunch((id) => addons.applyPending(repository.require(id)));
   const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
   const files = new FileService(config.serversDirectory);
   const importer = new ImportService(config.serversDirectory, config.dataDirectory);
-  const addons = new AddonService(config.serversDirectory, config.backupsDirectory, database);
   const bridge = new PlayerBridgeManager(database);
   const players = new PlayerService(config.serversDirectory, runtime, bridge);
   const autoSleep = new AutoSleepService(repository, settingsRepository, runtime, players);
@@ -410,6 +433,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     worlds.assertCanStart(id);
     if (match[2]?.startsWith('/versions')) return;
     if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
+    if (match[2]?.startsWith('/addons')) return;
+    if (match[2] !== '/stop') {
+      if (addons.isBusy(id)) throw new AppError(409, 'addon_change_in_progress', 'Wait for the current add-on change to finish.');
+      if (addons.hasRecoveryBlock(id)) throw new AppError(409, 'addon_recovery_required', 'Resolve the interrupted add-on change before making other server changes.');
+    }
     serverMutationCounts.set(id, (serverMutationCounts.get(id) ?? 0) + 1);
     mutationRequests.set(request, id);
   });
@@ -710,6 +738,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         throw error;
       }
     }
+    await addons.discardForDeletedServer(server);
     await serverTunnels.remove(id).catch(() => undefined);
     repository.delete(id);
     return reply.code(204).send();
@@ -801,6 +830,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       confirm: z.literal(true, { error: 'Confirm the Minecraft version change before continuing.' }),
     }).parse(request.body);
     requireServer(repository, id);
+    if (addons.hasPending(id)) throw new AppError(409, 'pending_addon_changes', 'Apply queued add-on changes with a server start, or cancel them in Plugins or Mods, before changing Minecraft versions.');
     const status = await serverVersions.changeVersion(id, input.version, { confirm: true });
     return { server: await serializeServerWithDiskCheck(repository.require(id), config.serversDirectory), status };
   });
@@ -913,6 +943,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const input = addonUpdateSchema.parse(request.body);
     const result = await addons.update(requireServer(repository, id), input.type, input.fileName);
     return { ...result, restartRequired: true };
+  });
+  app.delete('/api/servers/:id/addons/pending/:changeId', async (request) => {
+    const { id, changeId } = z.object({ id: idSchema, changeId: idSchema }).parse(request.params);
+    addonRemoveSchema.parse(request.body);
+    await addons.cancelPending(requireServer(repository, id), changeId);
+    return { ok: true };
   });
   app.delete('/api/servers/:id/addons/:type/:fileName', async (request) => {
     const { id, type, fileName } = addonRemoveParamsSchema.parse(request.params);
@@ -1062,6 +1098,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/updates/install', async (_request, reply) => {
+    if (addons.anyBusy()) throw new AppError(409, 'addon_change_in_progress', 'Wait for add-on changes to finish before updating NodePilot.');
     if (worlds.anyBusy()) throw new AppError(409, 'world_operation_in_progress', 'Wait for world operations to finish before updating NodePilot.');
     if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
     if (!options.isPrimaryInstance || !options.instanceLock) {
@@ -1075,6 +1112,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const restart = setTimeout(() => {
         void (async () => {
           try {
+            if (addons.anyBusy()) throw new AppError(409, 'addon_change_in_progress', 'Wait for add-on changes to finish before updating NodePilot.');
             if (worlds.anyBusy()) throw new AppError(409, 'world_operation_in_progress', 'Wait for world operations to finish before updating NodePilot.');
             if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
             await updates.launchPreparedUpdate();
@@ -1609,10 +1647,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook('onClose', async () => {
     updates.stop();
-    await serverVersions.stop();
-    await worlds.stop();
     autoSleep.stop();
     wakeProxy.stop();
+    await serverVersions.stop();
+    await worlds.stop();
+    await addons.stop();
     await tor.stop();
     bridge.shutdown();
     await metrics.shutdown();

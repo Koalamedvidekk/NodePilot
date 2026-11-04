@@ -128,6 +128,7 @@ export class ServerRuntime extends EventEmitter {
   private readonly logs = new Map<string, ConsoleLine[]>();
   private startGuard?: (serverId: string) => void;
   private startValidation?: (serverId: string) => Promise<void>;
+  private beforeLaunch?: (serverId: string) => Promise<void>;
 
   constructor(
     private readonly repository: ServerRepository,
@@ -148,6 +149,10 @@ export class ServerRuntime extends EventEmitter {
 
   setStartValidation(validate: (serverId: string) => Promise<void>): void {
     this.startValidation = validate;
+  }
+
+  setBeforeLaunch(prepare: (serverId: string) => Promise<void>): void {
+    this.beforeLaunch = prepare;
   }
 
   private assertStartAllowed(server: ServerRecord): void {
@@ -182,6 +187,11 @@ export class ServerRuntime extends EventEmitter {
     return this.processes.has(serverId) || this.starting.has(serverId);
   }
 
+  /** An owned game child, including one still shutting down; excludes a reserved start. */
+  hasProcess(serverId: string): boolean {
+    return this.processes.has(serverId);
+  }
+
   async start(server: ServerRecord, javaPath?: string, warning?: string): Promise<ServerRecord> {
     if (this.starting.has(server.id)) throw new AppError(409, 'server_already_active', 'This server is already starting.');
     this.assertStartAllowed(server);
@@ -214,6 +224,7 @@ export class ServerRuntime extends EventEmitter {
       if (process.platform === 'linux') {
         env.LD_LIBRARY_PATH = `${directory}:${env.LD_LIBRARY_PATH ?? ''}`;
       }
+      await this.beforeLaunch?.(server.id);
       this.assertStartAllowed(server);
       try {
         child = spawn(exePath, startup.gameArguments, {
@@ -239,6 +250,7 @@ export class ServerRuntime extends EventEmitter {
       const customJvmArgs = settings?.customJvmArgs ?? [];
       const launch = await launchArguments(directory, startup, initialMemoryMb, server.memoryMb, customJvmArgs);
       const args = launch.args;
+      await this.beforeLaunch?.(server.id);
       this.assertStartAllowed(server);
       try {
         child = spawn(javaPath, args, {

@@ -18,6 +18,7 @@ import type {
   ImportServerInput,
   AddonCatalogResult,
   AddonList,
+  AddonMutationResult,
   AddonType,
   AddonUpdate,
   ManagedPlayer,
@@ -588,36 +589,43 @@ export const api = {
     return Array.isArray(updates) ? updates as AddonUpdate[] : [];
   },
 
-  async installModrinthAddon(id: string, type: AddonType, projectId: string, allowMissingDependencies = false): Promise<void> {
-    await request<unknown>(`/servers/${encodeURIComponent(id)}/addons/modrinth`, {
+  async installModrinthAddon(id: string, type: AddonType, projectId: string, allowMissingDependencies = false): Promise<AddonMutationResult> {
+    return unwrap(await request<AddonMutationResult>(`/servers/${encodeURIComponent(id)}/addons/modrinth`, {
       method: 'POST',
       body: JSON.stringify({ type, projectId, allowMissingDependencies }),
-    });
+    }));
   },
 
-  async installHangarAddon(id: string, projectId: string): Promise<void> {
-    await request<unknown>(`/servers/${encodeURIComponent(id)}/addons/hangar`, {
+  async installHangarAddon(id: string, projectId: string): Promise<AddonMutationResult> {
+    return unwrap(await request<AddonMutationResult>(`/servers/${encodeURIComponent(id)}/addons/hangar`, {
       method: 'POST',
       body: JSON.stringify({ projectId }),
-    });
+    }));
   },
 
-  async uploadAddon(id: string, type: AddonType, file: File): Promise<void> {
+  async uploadAddon(id: string, type: AddonType, file: File): Promise<AddonMutationResult> {
     const form = new FormData();
     form.set('file', file, file.name);
     const query = new URLSearchParams({ type });
-    await request<unknown>(`/servers/${encodeURIComponent(id)}/addons/upload?${query}`, { method: 'POST', body: form });
+    return unwrap(await request<AddonMutationResult>(`/servers/${encodeURIComponent(id)}/addons/upload?${query}`, { method: 'POST', body: form }));
   },
 
-  async updateAddon(id: string, type: AddonType, fileName: string): Promise<void> {
-    await request<unknown>(`/servers/${encodeURIComponent(id)}/addons/update`, {
+  async updateAddon(id: string, type: AddonType, fileName: string): Promise<AddonMutationResult> {
+    return unwrap(await request<AddonMutationResult>(`/servers/${encodeURIComponent(id)}/addons/update`, {
       method: 'POST',
       body: JSON.stringify({ type, fileName }),
-    });
+    }));
   },
 
-  async removeAddon(id: string, type: AddonType, fileName: string): Promise<void> {
-    await request<unknown>(`/servers/${encodeURIComponent(id)}/addons/${type}/${encodeURIComponent(fileName)}`, {
+  async removeAddon(id: string, type: AddonType, fileName: string): Promise<AddonMutationResult> {
+    return unwrap(await request<AddonMutationResult>(`/servers/${encodeURIComponent(id)}/addons/${type}/${encodeURIComponent(fileName)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirm: true }),
+    }));
+  },
+
+  async cancelPendingAddon(id: string, changeId: string): Promise<void> {
+    await request<unknown>(`/servers/${encodeURIComponent(id)}/addons/pending/${encodeURIComponent(changeId)}`, {
       method: 'DELETE',
       body: JSON.stringify({ confirm: true }),
     });
