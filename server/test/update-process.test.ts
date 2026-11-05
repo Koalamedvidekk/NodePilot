@@ -37,7 +37,8 @@ import { waitForUpdateHelper } from ${JSON.stringify(new URL('../services/update
 const log = await open(${JSON.stringify(log)}, 'a');
 try {
   const child = spawnUpdateHelper('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ${JSON.stringify(script)}, '-OwnerPid', String(process.pid), '-ReadyFile', ${JSON.stringify(ready)}, '-Finished', ${JSON.stringify(finished)}], ${JSON.stringify(temporary)}, log.fd);
-  const readiness = waitForUpdateHelper(child, ${JSON.stringify(ready)}, 5000);
+  // Use the production readiness budget; cold Windows CI starts two PowerShells.
+  const readiness = waitForUpdateHelper(child, ${JSON.stringify(ready)});
   child.unref();
   await readiness;
 } finally { await log.close(); }
@@ -47,7 +48,7 @@ try {
     });
     owner.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     const exit = await new Promise<number | null>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Node updater owner did not exit: ' + stderr)), 10_000);
+      const timeout = setTimeout(() => reject(new Error('Node updater owner did not exit: ' + stderr)), 20_000);
       owner!.once('error', (error) => { clearTimeout(timeout); reject(error); });
       owner!.once('exit', (code) => { clearTimeout(timeout); resolve(code); });
     });
@@ -92,7 +93,7 @@ test('Windows updater bootstrap refuses a readiness marker from another helper P
       'exit 17',
     ].join('\r\n'));
     child=spawnUpdateHelper('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-ReadyFile',ready],temporary,log.fd);
-    await assert.rejects(waitForUpdateHelper(child,ready,5000),/exited before it was ready/);
+    await assert.rejects(waitForUpdateHelper(child,ready),/exited before it was ready/);
     await assert.rejects(readFile(ready),{code:'ENOENT'});
     assert.equal(JSON.parse(await readFile(ready+'.child','utf8')).ready,true,'The invalid child marker was inspected rather than accepted.');
   }finally{

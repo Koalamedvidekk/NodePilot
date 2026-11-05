@@ -4,7 +4,7 @@ export interface MinecraftHandshake {
   protocolVersion: number;
   serverAddress: string;
   serverPort: number;
-  nextState: number; // 1 = Status, 2 = Login
+  nextState: number; // 1 = Status, 2 = Login, 3 = Transfer (modern Java)
   totalBytes: number;
 }
 
@@ -70,6 +70,7 @@ export function writeString(str: string): Buffer {
 export function readString(buffer: Buffer, offset = 0): { value: string; bytesRead: number } | null {
   const len = readVarInt(buffer, offset);
   if (!len) return null;
+  if (len.value < 0) throw new Error('Negative Minecraft string length');
   const start = offset + len.bytesRead;
   if (start + len.value > buffer.length) return null;
   const value = buffer.toString('utf8', start, start + len.value);
@@ -92,8 +93,11 @@ export function createPacket(packetId: number, data: Buffer = Buffer.alloc(0)): 
 export function parseHandshake(buffer: Buffer): MinecraftHandshake | null {
   const packetLen = readVarInt(buffer, 0);
   if (!packetLen) return null;
+  if (packetLen.value < 1 || packetLen.value > 8192) throw new Error('Invalid Minecraft handshake length');
   const packetStart = packetLen.bytesRead;
   if (buffer.length < packetStart + packetLen.value) return null;
+  // Every field belongs to the declared frame, never a following coalesced packet.
+  buffer = buffer.subarray(0, packetStart + packetLen.value);
 
   let offset = packetStart;
   const packetId = readVarInt(buffer, offset);
@@ -105,7 +109,7 @@ export function parseHandshake(buffer: Buffer): MinecraftHandshake | null {
   offset += protocolVersion.bytesRead;
 
   const serverAddress = readString(buffer, offset);
-  if (!serverAddress) return null;
+  if (!serverAddress || Buffer.byteLength(serverAddress.value, 'utf8') > 4096) return null;
   offset += serverAddress.bytesRead;
 
   if (offset + 2 > buffer.length) return null;
@@ -115,6 +119,7 @@ export function parseHandshake(buffer: Buffer): MinecraftHandshake | null {
   const nextState = readVarInt(buffer, offset);
   if (!nextState) return null;
   offset += nextState.bytesRead;
+  if (![1, 2, 3].includes(nextState.value) || offset !== buffer.length) return null;
 
   return {
     protocolVersion: protocolVersion.value,
@@ -134,17 +139,18 @@ export function createStatusResponsePacket(options: {
   versionName?: string;
   maxPlayers?: number;
   onlinePlayers?: number;
+  hidePlayerCounts?: boolean;
 }): Buffer {
   const payload = {
     version: {
       name: options.versionName ?? 'NodePilot Auto-Wake',
       protocol: options.protocolVersion ?? 765,
     },
-    players: {
+    ...(!options.hidePlayerCounts ? { players: {
       max: options.maxPlayers ?? 20,
       online: options.onlinePlayers ?? 0,
       sample: [],
-    },
+    } } : {}),
     description: {
       text: options.motdText ?? '§b⚡ NodePilot Auto-Wake\n§eServer is sleeping. Connect to wake it up!',
     },
@@ -226,12 +232,14 @@ export async function probeMinecraftServer(host: string, port: number, timeoutMs
 
       let incoming = Buffer.alloc(0);
       socket.on('data', (chunk) => {
+        if (incoming.length + chunk.length > 1024 * 1024) { finish({ ready: false, error: 'Minecraft status response is too large' }); return; }
         incoming = Buffer.concat([incoming, chunk]);
 
         // Attempt to parse response packet: length, id=0x00, json string
         try {
           const packetLen = readVarInt(incoming, 0);
           if (!packetLen) return;
+          if (packetLen.value < 1 || packetLen.value > 1024 * 1024) throw new Error('Invalid Minecraft status length');
           const packetStart = packetLen.bytesRead;
           if (incoming.length < packetStart + packetLen.value) return;
 

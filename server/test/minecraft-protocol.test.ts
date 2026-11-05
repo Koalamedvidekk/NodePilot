@@ -88,6 +88,30 @@ test('createLoginDisconnectPacket encodes valid Minecraft disconnect message', (
   assert.equal(parsed.text, 'Server is waking up!');
 });
 
+test('handshake parsing respects frame boundaries, fragmentation and modern transfer intent', () => {
+  const port = Buffer.alloc(2); port.writeUInt16BE(25565);
+  const data = Buffer.concat([writeVarInt(773), writeString('example.test'), port, writeVarInt(3)]);
+  const handshake = createPacket(0, data);
+  for (let end = 0; end < handshake.length; end++) assert.equal(parseHandshake(handshake.subarray(0, end)), null);
+  const parsed = parseHandshake(Buffer.concat([handshake, createPacket(0, writeString('LoginPlayer'))]));
+  assert.equal(parsed?.nextState, 3); assert.equal(parsed?.totalBytes, handshake.length);
+  assert.equal(parsed?.serverAddress, 'example.test');
+  const missingPortAndState = createPacket(0, Buffer.concat([writeVarInt(773), writeString('example.test')]));
+  assert.equal(parseHandshake(Buffer.concat([missingPortAndState, Buffer.from([0x63, 0xdd, 0x02])])), null, 'Following bytes never complete fields outside the declared frame.');
+  assert.equal(parseHandshake(createPacket(0, Buffer.concat([data, Buffer.from([0])]))), null, 'Trailing bytes inside a handshake are invalid.');
+});
+
+test('malformed Minecraft lengths and unsupported handshake states are rejected', () => {
+  assert.throws(() => readVarInt(Buffer.from([0x80, 0x80, 0x80, 0x80, 0x80, 0x80])), /VarInt/);
+  assert.throws(() => readString(writeVarInt(-1)), /Negative/);
+  assert.throws(() => parseHandshake(writeVarInt(-1)), /length/);
+  assert.throws(() => parseHandshake(writeVarInt(8193)), /length/);
+  assert.throws(() => parseHandshake(Buffer.from([0])), /length/);
+  const port = Buffer.alloc(2); port.writeUInt16BE(25565);
+  for (const state of [0, 4, 99]) assert.equal(parseHandshake(createPacket(0, Buffer.concat([writeVarInt(765), writeString('host'), port, writeVarInt(state)]))), null);
+  assert.equal(parseHandshake(createPacket(5, Buffer.from([1, 2, 3]))), null);
+});
+
 test('probeMinecraftServer correctly detects active Minecraft server and handles offline server', async () => {
   // Test offline port first
   const offlineProbe = await probeMinecraftServer('127.0.0.1', 49152, 200);

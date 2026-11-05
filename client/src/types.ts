@@ -532,6 +532,9 @@ export interface WakeProxyStatus {
   playitRunning: boolean;
   tunnelConfigured: boolean;
   message?: string;
+  starting?: boolean;
+  startup?: { stage: string; percent: number | null; isReady: boolean };
+  playerNotice?: string;
 }
 
 export interface AutoSleepStatus {

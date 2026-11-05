@@ -183,7 +183,9 @@ test('auto-wake refuses Java selected for a version replaced during discovery', 
   const java = { findUsable: () => discovered } as unknown as JavaService;
   let starts = 0;
   const runtime = { start: async () => { starts++; return server; } } as unknown as ServerRuntime;
-  const service = new WakeProxyService(repository, new ServerSettingsRepository(database),
+  const wakeSettings = new ServerSettingsRepository(database);
+  wakeSettings.update(server.id, { autoWake: true });
+  const service = new WakeProxyService(repository, wakeSettings,
     new ServerTunnelRepository(database), {} as PlayitService, runtime, java);
   t.after(() => service.stop());
   const wake = (service as unknown as { ensureServerStarting(value: ServerRecord): Promise<boolean> }).ensureServerStarting(server);

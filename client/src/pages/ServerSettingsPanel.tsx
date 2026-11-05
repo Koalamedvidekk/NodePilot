@@ -124,18 +124,22 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
     }
   };
 
-  // Periodic polling for live countdown and status when server is running
+  // Keep wake status current while stopped too, without resetting form edits.
   useEffect(() => {
-    if (!details?.runtime.isRunning) return;
+    if (!details?.runtime.isRunning && !details?.settings.autoWake && !details?.runtime.wakeProxy.starting) return;
 
+    let active = true;
+    let inFlight = false;
     const timer = setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
       void api.getServerSettings(server.id).then((fresh) => {
-        setDetails(fresh);
-      }).catch(() => undefined);
-    }, 4000);
+        if (active) setDetails(fresh);
+      }).catch(() => undefined).finally(() => { inFlight = false; });
+    }, details?.runtime.wakeProxy.starting ? 2000 : 4000);
 
-    return () => clearInterval(timer);
-  }, [details?.runtime.isRunning, server.id]);
+    return () => { active = false; clearInterval(timer); };
+  }, [details?.runtime.isRunning, details?.settings.autoWake, details?.runtime.wakeProxy.starting, server.id]);
 
   // Section Save Handlers
   const handleSaveAutoWake = async () => {
@@ -337,6 +341,8 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
   const isServerRunning = details?.runtime.isRunning ?? (server.status === 'running' || server.status === 'starting');
   const isBedrock = details?.runtime.isBedrock ?? (server.software === 'bedrock' || server.game === 'minecraft-bedrock');
   const wakeProxy = details?.runtime.wakeProxy;
+  const startupPercent = typeof wakeProxy?.startup?.percent === 'number' && Number.isFinite(wakeProxy.startup.percent)
+    ? Math.max(0, Math.min(100, wakeProxy.startup.percent)) : null;
   const autoSleepStatus = details?.runtime.autoSleep;
   const tunnel = details?.runtime.tunnel;
   const playit = details?.runtime.playit;
@@ -500,7 +506,9 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                       : 'is-offline'
                   }`}
                 >
-                  {wakeProxy?.status === 'active'
+                  {wakeProxy?.starting
+                    ? 'Starting server'
+                    : wakeProxy?.status === 'active'
                     ? 'Active · Listening'
                     : wakeProxy?.status === 'standby'
                     ? 'Standby · Server Active'
@@ -529,6 +537,27 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                     variant="purple"
                   />
                 </div>
+              </div>
+
+              {wakeProxy?.starting && wakeProxy.startup && (
+                <div className="setting-detail-box" role="status" aria-live="polite">
+                  <strong>Starting server</strong>
+                  <p>{wakeProxy.startup.stage}{startupPercent !== null ? ` · ${startupPercent}%` : ''}</p>
+                  {startupPercent !== null && (
+                    <div className="update-progress-track" role="progressbar" aria-label={wakeProxy.startup.stage} aria-valuemin={0} aria-valuemax={100} aria-valuenow={startupPercent}>
+                      <span style={{ width: `${startupPercent}%` }} />
+                    </div>
+                  )}
+                  <p>{startupPercent !== null
+                    ? 'Minecraft reported this percentage for the current stage. It is not an overall startup estimate.'
+                    : 'Minecraft has not reported a percentage for this stage.'}</p>
+                </div>
+              )}
+
+              <div className="setting-detail-box">
+                <strong>What players see while the server starts</strong>
+                <p>{wakeProxy?.playerNotice ?? 'Fast starts connect directly. If startup takes longer, players receive a Starting server notice instead of waiting on Connecting to server.'}</p>
+                <p>Refresh the Minecraft multiplayer server list for the latest startup stage and reported percentage, then join when ready. The notice on the join screen is a snapshot and does not update live.</p>
               </div>
 
               {/* Infrastructure Readiness & Diagnostics Box */}

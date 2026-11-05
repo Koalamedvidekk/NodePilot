@@ -196,6 +196,9 @@ world ZIP inspection/import, downloads, and backup/restore. Bedrock and ambiguou
 Java layouts show an availability explanation. Plugin and mod data stored outside
 world folders stays server-wide. See the [Worlds guide](docs/worlds.md) for details.
 
+For automatic startup when a player joins and Minecraft startup notices, see the
+[Auto-Wake guide](docs/auto-wake.md).
+
 ## Configuration and data
 
 When running for the first time, NodePilot offers an interactive setup wizard in your terminal to choose whether you want to run locally on your PC or make NodePilot accessible to other devices on your local Wi-Fi / LAN network. You can run or re-run this anytime with:
