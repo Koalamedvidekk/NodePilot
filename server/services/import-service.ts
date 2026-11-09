@@ -70,9 +70,7 @@ type ArchiveFile = SourceFile & {
 type PreparedImport = {
   inspection: ImportInspection;
   root: string;
-  sourceFiles: SourceFile[];
   archiveFiles?: ArchiveFile[];
-  archivePrefix?: string;
 };
 
 export type ImportCopyResult = {
@@ -155,11 +153,12 @@ function inferredJavaMajor(version: string | undefined): number | null {
   const values = version.split('.').map((part) => Number.parseInt(part, 10));
   const major = values[0] ?? 0;
   const minor = values[1] ?? 0;
+  const patch = values[2] ?? 0;
   if (major >= 26) return 25;
   if (major !== 1) return null;
   if (minor <= 11) return 8;
-  if (minor <= 16) return minor === 16 && (values[2] ?? 0) >= 5 ? 16 : 11;
-  if (minor <= 19) return 17;
+  if (minor <= 16) return minor === 16 && patch >= 5 ? 16 : 11;
+  if (minor <= 19 || (minor === 20 && patch < 5)) return 17;
   return 21;
 }
 
@@ -394,8 +393,11 @@ async function readArchiveEntries(archivePath: string): Promise<ArchiveFile[]> {
       if (raw.length >= MAX_IMPORT_ENTRIES) throw new AppError(413, 'import_too_many_entries', `ZIP imports are limited to ${MAX_IMPORT_ENTRIES.toLocaleString()} entries.`);
       if (isSymlinkEntry(entry) || entry.isEncrypted()) throw new AppError(400, 'unsafe_archive_entry', 'Encrypted or linked ZIP entries cannot be imported.');
       const rawPath = entry.fileName.replace(/\\/g, '/');
-      safeArchiveRelative(rawPath);
       const directory = rawPath.endsWith('/');
+      const relativePath = rawPath.replace(/\/$/, '');
+      if (!safeArchiveRelative(relativePath)) {
+        throw new AppError(400, 'unsafe_archive_path', 'The archive contains an invalid entry name.');
+      }
       if (!directory) {
         if (entry.uncompressedSize > 0 && entry.compressedSize > 0 && entry.uncompressedSize / entry.compressedSize > MAX_ARCHIVE_RATIO) {
           throw new AppError(413, 'archive_compression_ratio', 'The ZIP contains a suspiciously compressed entry.');
@@ -403,14 +405,14 @@ async function readArchiveEntries(archivePath: string): Promise<ArchiveFile[]> {
         totalBytes += entry.uncompressedSize;
         if (totalBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES) throw new AppError(413, 'import_too_large', 'The ZIP expands beyond NodePilot’s safe import limit.');
       }
-      raw.push({ rawPath, archivePath: rawPath, relativePath: rawPath.replace(/\/$/, ''), size: directory ? 0 : entry.uncompressedSize, directory });
+      raw.push({ rawPath, archivePath: rawPath, relativePath, size: directory ? 0 : entry.uncompressedSize, directory });
     }
     const nonRoot = raw.filter((file) => file.rawPath && file.rawPath.includes('/'));
     const roots = new Set(raw.filter((file) => file.rawPath).map((file) => file.rawPath.split('/')[0]));
     const prefix = raw.length && nonRoot.length === raw.length && roots.size === 1 ? `${[...roots][0]}/` : '';
     const names = new Set<string>();
     const files = raw.map((entry): ArchiveFile => {
-      const relativePath = safeArchiveRelative(entry.rawPath.replace(/\/$/, ''), prefix);
+      const relativePath = safeArchiveRelative(entry.relativePath, prefix);
       if (!relativePath) return { ...entry, relativePath: '', archivePath: entry.rawPath };
       const key = relativePath.toLocaleLowerCase();
       if (names.has(key)) throw new AppError(400, 'duplicate_archive_entry', 'The ZIP contains duplicate paths after normalization.');
@@ -531,47 +533,47 @@ export class ImportService {
   }
 
   async inspectDirectory(input: string): Promise<ImportInspection> {
-    const root = await this.sourceDirectory(input);
-    const files = await scanDirectory(root);
-    const jar = primaryJar(files);
-    const metadata = jar ? await inspectJar(path.join(root, jar)).catch(() => undefined) : undefined;
-    const [properties, eula] = await Promise.all([
-      readSmallFile(path.join(root, 'server.properties')),
-      readSmallFile(path.join(root, 'eula.txt')),
-    ]);
-    return inspectionFromFiles('directory', root, files, { jarMetadata: metadata, properties, eula });
+    return (await this.prepare({ type: 'directory', path: input })).inspection;
   }
 
   async inspectArchive(archivePath: string, sourceLabel = archivePath): Promise<ImportInspection> {
-    const files = await readArchiveEntries(archivePath);
-    const properties = await readArchiveText(archivePath, files.find((file) => file.relativePath.toLowerCase() === 'server.properties')?.archivePath ?? '__missing__');
-    const eula = await readArchiveText(archivePath, files.find((file) => file.relativePath.toLowerCase() === 'eula.txt')?.archivePath ?? '__missing__');
-    return inspectionFromFiles('archive', sourceLabel, files, { properties, eula });
+    return (await this.prepare({ type: 'archive', path: archivePath }, sourceLabel)).inspection;
   }
 
-  async prepare(source: ImportSource): Promise<PreparedImport> {
+  async prepare(source: ImportSource, sourceLabel = source.path): Promise<PreparedImport> {
     if (source.type === 'directory') {
       const root = await this.sourceDirectory(source.path);
-      const sourceFiles = await scanDirectory(root);
-      const inspection = await this.inspectDirectory(root);
-      return { inspection, root, sourceFiles };
+      const files = await scanDirectory(root);
+      const jar = primaryJar(files);
+      const [metadata, properties, eula] = await Promise.all([
+        jar ? inspectJar(path.join(root, jar)).catch(() => undefined) : undefined,
+        readSmallFile(path.join(root, 'server.properties')),
+        readSmallFile(path.join(root, 'eula.txt')),
+      ]);
+      const inspection = inspectionFromFiles('directory', root, files, { jarMetadata: metadata, properties, eula });
+      return { inspection, root };
     }
     const archiveStats = await stat(source.path).catch(() => undefined);
     if (!archiveStats?.isFile()) throw new AppError(404, 'import_archive_not_found', 'The uploaded ZIP archive is no longer available. Upload it again.');
     const archiveFiles = await readArchiveEntries(source.path);
-    const inspection = await this.inspectArchive(source.path, source.path);
-    return { inspection, root: source.path, sourceFiles: archiveFiles, archiveFiles };
+    const propertiesPath = archiveFiles.find((file) => file.relativePath.toLowerCase() === 'server.properties')?.archivePath;
+    const eulaPath = archiveFiles.find((file) => file.relativePath.toLowerCase() === 'eula.txt')?.archivePath;
+    const [properties, eula] = await Promise.all([
+      propertiesPath ? readArchiveText(source.path, propertiesPath) : undefined,
+      eulaPath ? readArchiveText(source.path, eulaPath) : undefined,
+    ]);
+    const inspection = inspectionFromFiles('archive', sourceLabel, archiveFiles, { properties, eula });
+    return { inspection, root: source.path, archiveFiles };
   }
 
-  async copyIntoManagedServer(source: ImportSource, managedDirectory: string, acceptedEula: boolean, port: number): Promise<ImportCopyResult> {
+  async copyIntoManagedServer(prepared: PreparedImport, managedDirectory: string, acceptedEula: boolean, port: number): Promise<ImportCopyResult> {
     if (!acceptedEula) throw new AppError(400, 'eula_not_accepted', 'You must explicitly accept the Minecraft EULA before importing a server.');
-    const prepared = await this.prepare(source);
     if (!prepared.inspection.canImport) {
       throw new AppError(422, 'server_launcher_missing', 'NodePilot could not find a runnable server JAR or verified loader launch files to import.');
     }
     const destination = await resolveManagedServerRoot(this.serversDirectory, managedDirectory, true);
     try {
-      if (source.type === 'directory') {
+      if (prepared.inspection.sourceType === 'directory') {
         await copyDirectory(prepared.root, destination);
       } else {
         await extractArchive(prepared.root, destination, prepared.archiveFiles ?? []);

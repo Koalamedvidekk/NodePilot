@@ -603,7 +603,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const directory = safeDirectoryName(input.name, id);
     let created: ServerRecord | undefined;
     try {
-      const copied = await importer.copyIntoManagedServer(source, directory, input.eulaAccepted, port);
+      const copied = await importer.copyIntoManagedServer(inspected, directory, input.eulaAccepted, port);
       const requiredJavaMajor = importer.requiredJavaMajor(version);
       created = repository.create({
         id,

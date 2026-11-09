@@ -37,12 +37,13 @@ function FindingList({ inspection }: { inspection: ImportInspection }) {
 }
 
 function InspectionSummary({ inspection }: { inspection: ImportInspection }) {
+  const usesLoaderArgs = inspection.startupConfig?.mode === 'arg-files';
   return <section className="panel import-summary">
     <div className="panel-heading"><div><p className="eyebrow">IMPORT INSPECTION</p><h3>Existing server detected</h3><p>Nothing has been copied or changed yet.</p></div><span className={inspection.canImport ? 'import-ready-badge' : 'import-error-badge'}>{inspection.canImport ? 'Ready to configure' : 'Needs attention'}</span></div>
     <dl className="import-detail-grid">
       <div><dt>Detected software</dt><dd>{titleCase(inspection.detectedSoftware)}</dd></div>
       <div><dt>Minecraft version</dt><dd>{inspection.minecraftVersion ?? 'Could not detect'}</dd></div>
-      <div><dt>Server JAR</dt><dd><code>{inspection.serverJar ?? 'Not found'}</code></dd></div>
+      <div><dt>{usesLoaderArgs ? 'Server launcher' : 'Server JAR'}</dt><dd><code>{usesLoaderArgs ? 'Loader argument files' : inspection.serverJar ?? 'Not found'}</code></dd></div>
       <div><dt>Original port</dt><dd>{inspection.port ?? 'Not detected'}</dd></div>
       <div><dt>Worlds</dt><dd>{inspection.worlds.length ? inspection.worlds.join(', ') : 'None detected'}</dd></div>
       <div><dt>Players</dt><dd>{inspection.playerDataFiles ? `${inspection.playerDataFiles} saved player record${inspection.playerDataFiles === 1 ? '' : 's'}` : 'No player data detected'}</dd></div>
@@ -61,7 +62,7 @@ export function ImportServerPage() {
   const [directoryPath, setDirectoryPath] = useState('');
   const [archiveName, setArchiveName] = useState('');
   const [uploadId, setUploadId] = useState('');
-  const [inspection, setInspection] = useState<ImportInspection>();
+  const [lastInspection, setInspection] = useState<ImportInspection>();
   const [checking, setChecking] = useState(false);
   const [name, setName] = useState('');
   const [software, setSoftware] = useState<ProvisionableServerSoftware>('paper');
@@ -71,13 +72,15 @@ export function ImportServerPage() {
   const [eulaAccepted, setEulaAccepted] = useState(false);
   const [error, setError] = useState<string>();
   const [importing, setImporting] = useState(false);
+  const inspection = lastInspection?.sourceType === mode ? lastInspection : undefined;
+  const sourceBusy = checking || importing;
 
   const adoptInspection = (next: ImportInspection) => {
     setInspection(next);
     setName((current) => current || next.suggestedName);
     setSoftware(inspectedSoftware(next));
     setVersion(next.minecraftVersion ?? '');
-    setPort(next.port ? String(next.port) : '');
+    setPort('');
     setEulaAccepted(false);
   };
 
@@ -125,6 +128,7 @@ export function ImportServerPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (sourceBusy) return;
     if (!inspection?.canImport) {
       setError('Inspect a source with a runnable server JAR or verified loader launch files before importing.');
       return;
@@ -184,8 +188,8 @@ export function ImportServerPage() {
       <form className="import-main" onSubmit={submit}>
         <section className="panel import-source-panel">
           <div className="section-heading"><div><p className="eyebrow">1 · SELECT SOURCE</p><h3>Where is the existing server?</h3><p>Choose a local directory or upload a ZIP archive. ZIP entries and links are inspected before extraction.</p></div></div>
-          <div className="source-mode-tabs"><button type="button" className={mode === 'directory' ? 'is-selected' : ''} onClick={() => { setMode('directory'); setError(undefined); }}><Icon name="folder" size={17} /> Local directory</button><button type="button" className={mode === 'archive' ? 'is-selected' : ''} onClick={() => { setMode('archive'); setError(undefined); }}><Icon name="file" size={17} /> ZIP archive</button></div>
-          {mode === 'directory' ? <div className="import-source-input"><label className="field-group form-field"><span>Absolute folder path</span><input value={directoryPath} onChange={(event) => { setDirectoryPath(event.target.value); setInspection(undefined); }} placeholder={navigator.platform.toLowerCase().includes('win') ? 'C:\\Minecraft\\my-server' : '/home/you/minecraft/my-server'} /><small className="input-note">The folder is read-only during inspection and copied during import. Links and NodePilot-managed directories are refused.</small></label><button className="button button-secondary" type="button" onClick={() => void inspectDirectory()} disabled={checking}>{checking ? <><span className="button-loader" /> Inspecting…</> : 'Inspect directory'}</button></div> : <label className="archive-dropzone"><input type="file" accept=".zip,application/zip" onChange={(event) => void selectArchive(event)} disabled={checking} /><Icon name="files" size={28} /><strong>{checking ? 'Uploading and validating archive…' : archiveName || 'Choose a ZIP archive'}</strong><span>Archives are streamed locally, path-checked, size-limited, and never extracted over existing files.</span></label>}
+          <div className="source-mode-tabs"><button type="button" className={mode === 'directory' ? 'is-selected' : ''} disabled={sourceBusy} onClick={() => { setMode('directory'); setError(undefined); }}><Icon name="folder" size={17} /> Local directory</button><button type="button" className={mode === 'archive' ? 'is-selected' : ''} disabled={sourceBusy} onClick={() => { setMode('archive'); setError(undefined); }}><Icon name="file" size={17} /> ZIP archive</button></div>
+          {mode === 'directory' ? <div className="import-source-input"><label className="field-group form-field"><span>Absolute folder path</span><input value={directoryPath} disabled={sourceBusy} onChange={(event) => { setDirectoryPath(event.target.value); setInspection(undefined); }} placeholder={navigator.platform.toLowerCase().includes('win') ? 'C:\\Minecraft\\my-server' : '/home/you/minecraft/my-server'} /><small className="input-note">The folder is read-only during inspection and copied during import. Links and NodePilot-managed directories are refused.</small></label><button className="button button-secondary" type="button" onClick={() => void inspectDirectory()} disabled={sourceBusy}>{checking ? <><span className="button-loader" /> Inspecting…</> : 'Inspect directory'}</button></div> : <label className="archive-dropzone"><input type="file" accept=".zip,application/zip" onChange={(event) => void selectArchive(event)} disabled={sourceBusy} /><Icon name="files" size={28} /><strong>{checking ? 'Uploading and validating archive…' : archiveName || 'Choose a ZIP archive'}</strong><span>Archives are streamed locally, path-checked, size-limited, and never extracted over existing files.</span></label>}
         </section>
         {inspection && <InspectionSummary inspection={inspection} />}
         {inspection && <section className="panel import-config-panel">
@@ -203,7 +207,7 @@ export function ImportServerPage() {
               <small className="input-note">Controls compatibility checks. Detected loader startup files are retained separately.</small>
             </div>
             <label className="field-group form-field"><span>Minecraft version</span><input value={version} onChange={(event) => setVersion(event.target.value.replace(/[^A-Za-z0-9._-]/g, ''))} placeholder="1.21.4" /></label>
-            <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder="Auto-select" /><small className="input-note">The original port is retained when free; otherwise NodePilot updates only the managed copy.</small></label>
+            <label className="field-group form-field"><span>Game port <em>optional</em></span><input inputMode="numeric" value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))} placeholder={inspection.port ? `Auto-select (prefer ${inspection.port})` : 'Auto-select'} /><small className="input-note">Leave blank to prefer the original port and choose another if it is occupied. Enter a port to require that exact value.</small></label>
             <div className="field-group form-field">
               <span>Maximum memory (MB)</span>
               <input inputMode="numeric" value={memoryMb} onChange={(event) => setMemoryMb(event.target.value.replace(/[^0-9]/g, ''))} />
@@ -223,7 +227,7 @@ export function ImportServerPage() {
             </div>
           </div>
           <label className={`eula-agreement ${eulaAccepted ? 'is-accepted' : ''}`}><input type="checkbox" checked={eulaAccepted} onChange={(event) => setEulaAccepted(event.target.checked)} /><span className="checkbox-mark"><Icon name="check" size={15} /></span><span><strong>I accept the Minecraft EULA for this managed copy</strong><small>NodePilot will set eula=true only in the copied server directory. Your original source remains unchanged.</small></span></label>
-          <div className="import-submit-row"><div className="safe-note"><Icon name="check" size={17} /><span>Source files are copied, never moved or overwritten.</span></div><button className="button button-primary" type="submit" disabled={importing || !inspection.canImport || !eulaAccepted}>{importing ? <><span className="button-loader" /> Copying server…</> : <><Icon name="plus" size={17} /> Import server</>}</button></div>
+          <div className="import-submit-row"><div className="safe-note"><Icon name="check" size={17} /><span>Source files are copied, never moved or overwritten.</span></div><button className="button button-primary" type="submit" disabled={sourceBusy || !inspection.canImport || !eulaAccepted}>{importing ? <><span className="button-loader" /> Copying server…</> : <><Icon name="plus" size={17} /> Import server</>}</button></div>
         </section>}
       </form>
       <aside className="import-aside"><section className="panel aside-card"><div className="aside-icon"><Icon name="files" size={20} /></div><h3>What is preserved</h3><ul className="check-list"><li><Icon name="check" size={16} /> Worlds and player data</li><li><Icon name="check" size={16} /> server.properties and configuration</li><li><Icon name="check" size={16} /> Existing plugins and mods</li><li><Icon name="check" size={16} /> Original source left untouched</li></ul></section><section className="panel aside-card subtle-card"><Icon name="warning" size={20} /><div><h3>About loader detection</h3><p>Fabric, Forge, NeoForge, and Quilt launch files are retained when they can be verified. Review any detection warning before starting an imported modded server.</p></div></section></aside>

@@ -152,8 +152,24 @@ if (-not (Test-Path "$rootDir\node_modules")) {
     }
 }
 
-# 4. Check build
-if (-not (Test-Path "$rootDir\server\dist") -or -not (Test-Path "$rootDir\client\dist")) {
+# A skipped install hook or a Node upgrade can leave node_modules present with an unusable SQLite binding.
+$sqliteProbe = "try { new (require('better-sqlite3'))(':memory:').close(); } catch { process.exitCode = 1; }"
+node -e $sqliteProbe
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[NodePilot] Repairing SQLite for the current Node.js version..." -ForegroundColor Cyan
+    npm rebuild better-sqlite3 --ignore-scripts=false --foreground-scripts
+    if ($LASTEXITCODE -eq 0) {
+        node -e $sqliteProbe
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[NodePilot] SQLite could not load. Review the npm rebuild output above before retrying." -ForegroundColor Red
+        exit 1
+    }
+}
+
+# 4. Build if either application entry point is missing.
+if (-not (Test-Path -LiteralPath "$rootDir\server\dist\index.js" -PathType Leaf) -or
+    -not (Test-Path -LiteralPath "$rootDir\client\dist\index.html" -PathType Leaf)) {
     Write-Host ""
     Write-Host "[NodePilot] Building NodePilot client and server (npm run build)..." -ForegroundColor Cyan
     npm run build
@@ -169,4 +185,5 @@ Write-Host "[NodePilot] Starting NodePilot dashboard..." -ForegroundColor Green
 Write-Host "[NodePilot] Press Ctrl+C in this terminal to stop the server." -ForegroundColor Gray
 Write-Host ""
 
-npm start
+npm start --workspace server --ignore-scripts
+exit $LASTEXITCODE

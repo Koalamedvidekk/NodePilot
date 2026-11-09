@@ -30,12 +30,15 @@ jobs:
         run: npx tsx --test --test-timeout=30000 server/test/minecraft-protocol.test.ts server/test/startup-progress.test.ts server/test/wake-proxy.test.ts
       - name: Test Worlds layouts, transfers and recovery on Windows
         run: npx tsx --test server/test/world-foundation.test.ts server/test/world-transfers-packs.test.ts server/test/world-routes.test.ts server/test/world-overlap.test.ts server/test/world-restore-transition.test.ts
-      - name: Build and verify the Versions and Worlds APIs
+      - name: Test server imports on Windows
+        run: npx tsx --test server/test/import-service.test.ts
+      - name: Build and verify the compiled APIs
         run: |
           npm run build -w server
           node scripts/test-versions-api.mjs
           node scripts/test-worlds-api.mjs
           node scripts/test-addon-queue-api.mjs
+          node scripts/test-import-api.mjs
 
   release:
     name: Test, package, and publish
@@ -80,6 +83,9 @@ jobs:
 
       - name: Verify queued add-ons through the compiled API
         run: node scripts/test-addon-queue-api.mjs
+
+      - name: Verify Forge directory and ZIP imports through the compiled API
+        run: node scripts/test-import-api.mjs
 
       - name: Verify add-on queue browser flows
         run: |

@@ -89,7 +89,16 @@ if [ ! -d "${ROOT_DIR}/node_modules" ]; then
   npm install
 fi
 
-if [ ! -d "${ROOT_DIR}/server/dist" ] || [ ! -d "${ROOT_DIR}/client/dist" ]; then
+sqlite_probe="try { new (require('better-sqlite3'))(':memory:').close(); } catch { process.exitCode = 1; }"
+if ! node -e "$sqlite_probe"; then
+  echo '[NodePilot] Repairing SQLite for the current Node.js version...'
+  if ! npm rebuild better-sqlite3 --ignore-scripts=false --foreground-scripts || ! node -e "$sqlite_probe"; then
+    echo '[NodePilot] SQLite could not load. Review the npm rebuild output above before retrying.' >&2
+    exit 1
+  fi
+fi
+
+if [ ! -f "${ROOT_DIR}/server/dist/index.js" ] || [ ! -f "${ROOT_DIR}/client/dist/index.html" ]; then
   echo ""
   echo -e "\033[0;36m[NodePilot] Building NodePilot client and server (npm run build)...\033[0m"
   npm run build
@@ -100,4 +109,4 @@ echo -e "\033[0;32m[NodePilot] Starting NodePilot dashboard...\033[0m"
 echo -e "\033[0;90m[NodePilot] Press Ctrl+C in this terminal to stop the server.\033[0m"
 echo ""
 
-npm start
+exec npm start --workspace server --ignore-scripts

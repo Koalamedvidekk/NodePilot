@@ -148,7 +148,8 @@ The update helper, build output, and relaunch logs are under `.nodepilot/updates
 If an older updater cannot apply the fix, stop NodePilot and back up `.nodepilot/`
 and your `.env` files. Download the latest universal ZIP from GitHub Releases,
 copy its application contents into the existing installation folder while keeping
-your data and environment files, then run the launcher again.
+your data and environment files, then run `npm ci` and `npm run build` before
+relaunching.
 
 Git checkouts intentionally do **not** auto-install releases, because an updater
 must never overwrite local source changes. Update a clone with:
@@ -178,8 +179,8 @@ no supported version installer.
 
 If the Versions page reports that its API is missing after a source update, stop
 your game servers and restart NodePilot. Run `npm run build` before relaunching
-when building manually; the Windows and Linux launchers build both application
-parts through `npm start`. Refresh the browser after startup.
+after a source update. The Windows and Linux launchers reuse existing build
+outputs. Refresh the browser after startup.
 
 ## Managing worlds
 
