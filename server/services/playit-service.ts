@@ -1,16 +1,106 @@
-import { exec, spawn, type ChildProcess } from 'node:child_process';
-import crypto from 'node:crypto';
-import { createWriteStream, existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, unlink } from 'node:fs/promises';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync,
+} from 'node:fs';
+import { chmod, mkdir, mkdtemp, rename, unlink } from 'node:fs/promises';
+import { Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 
 import type { PlayitStatus } from '../types.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+const probeOptions = { timeout: 4_000, maxBuffer: 8_192, windowsHide: true } as const;
+const managedVersion = '0.17.1';
+const maxDownloadBytes = 40 * 1024 * 1024;
+const claimUrlPattern = /https:\/\/playit\.gg\/claim\/([0-9a-f]{10})(?![a-z0-9])/i;
+const assetDigests: Readonly<Record<string, string>> = {
+  'playit-windows-x86_64-signed.exe': '9b00d6ff7d37d1052e5ae097e1348e11deae8617cd7a8ba39d1777f2006316a3',
+  'playit-windows-x86-signed.exe': '5302a28438f4612d1fd26148420a60cf9235ce4271d5d6549bec474b709cfa88',
+  'playit-linux-amd64': 'e78d463d93aa1e3ec36a06ded5a1f4fe879905fdceb865df8f4cef6124f8a555',
+  'playit-linux-aarch64': 'cd3fa1cedac40a71d80a120e6353e08836308840340b58e659e8f25d00601f66',
+  'playit-linux-armv7': '91b4afd035e05deda2a8bf2d648c53ba9a67465c4bcce459f573d5f61867d00a',
+  'playit-linux-i686': 'c2847be0ec3ef038697f28b8196c0b1a9dff71e8392657eda767afec63d98fd5',
+};
+
+interface BinaryInfo {
+  version: string | null;
+  legacy: boolean;
+}
+
+interface ClaimResult {
+  claimUrl: string;
+  claimCode: string;
+}
+
+interface PendingClaim {
+  child: ChildProcess;
+  stagePath: string;
+  secretPath: string;
+  result: ClaimResult | null;
+  timeout: ReturnType<typeof setTimeout>;
+  reject: (error: Error) => void;
+}
+
+function validSecretKey(value: string): boolean {
+  return /^(?:[a-f0-9]{2}){1,128}$/i.test(value);
+}
+
+function readSecretFile(secretPath: string): string | null {
+  try {
+    const content = readFileSync(secretPath, 'utf8');
+    const match = content.match(/^[\t ]*secret_key[\t ]*=[\t ]*(['"])([a-f0-9]+)\1[\t ]*(?:#.*)?\r?$/im);
+    return match && validSecretKey(match[2]) ? match[2] : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSecretFile(secretPath: string, key: string): void {
+  mkdirSync(path.dirname(secretPath), { recursive: true });
+  const temporaryPath = `${secretPath}.tmp-${randomUUID()}`;
+  try {
+    writeFileSync(temporaryPath, `secret_key = "${key}"\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    renameSync(temporaryPath, secretPath);
+  } finally {
+    try { unlinkSync(temporaryPath); } catch {}
+  }
+}
+
+function isLiveChild(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null && !child.killed;
+}
+
+function killChild(child: ChildProcess): void {
+  if (isLiveChild(child)) {
+    try { child.kill(); } catch {}
+  }
+}
+
+function cleanClaimStage(stagePath: string): void {
+  try { unlinkSync(stagePath); } catch {}
+  try { rmdirSync(path.dirname(stagePath)); } catch {}
+}
+
+function claimExitMessage(output: string, code: number | null, hasUrl: boolean): string {
+  if (/AgentClaimRejected|program rejected/i.test(output)) {
+    return 'The Playit claim was declined. Choose Link Account to try again.';
+  }
+  if (/agent limit|too many agents|maximum number of agents/i.test(output)) {
+    return 'The Playit account reached its agent limit. Remove an unused agent or enter an existing agent secret key.';
+  }
+  if (/error: unexpected argument|unrecognized (option|argument)/i.test(output)) {
+    return 'Playit rejected the linking command. Install the NodePilot-managed Playit agent and try again.';
+  }
+
+  const phase = hasUrl ? 'before linking was complete' : 'before providing a claim URL';
+  const status = code === null ? '' : ` (exit code ${code})`;
+  return `The Playit agent exited ${phase}${status}. Check that this computer can reach playit.gg and try again.`;
+}
 
 export interface ParsedPlayitTunnel {
   id: string;
@@ -24,96 +114,105 @@ export interface ParsedPlayitTunnel {
 
 export class PlayitService {
   private childProcess: ChildProcess | null = null;
-  private exchangeProcess: ChildProcess | null = null;
   private cachedBinaryPath: string | null = null;
-  private managedBinaryPath: string;
-  private activeClaimUrl: string | null = null;
+  private readonly managedBinaryPath: string;
+  private readonly previousManagedBinaryPath: string;
+  private installRequest: Promise<void> | null = null;
+  private binaryProbe: { key: string; result: Promise<BinaryInfo> } | null = null;
+  private pendingClaim: PendingClaim | null = null;
+  private claimRequest: Promise<ClaimResult> | null = null;
+  private claimGeneration = 0;
+  private claimError: string | undefined;
 
   constructor(private readonly dataDirectory?: string) {
     const baseDir = this.dataDirectory || path.resolve('.nodepilot');
-    this.managedBinaryPath = path.join(
-      baseDir,
-      'bin',
-      os.platform() === 'win32' ? 'playit.exe' : 'playit',
-    );
+    const fileName = os.platform() === 'win32' ? 'playit.exe' : 'playit';
+    this.previousManagedBinaryPath = path.join(baseDir, 'bin', fileName);
+    this.managedBinaryPath = path.join(baseDir, 'bin', `playit-v${managedVersion}`, fileName);
   }
 
   /**
-   * Determine the official download URL for the host machine.
+   * NodePilot uses the portable CLI protocol from Playit 0.x.
+   * The current Playit 2.x release uses a separate CLI and daemon.
    */
-  getDownloadUrl(): { url: string; fileName: string } | null {
+  getDownloadUrl(): { url: string; fileName: string; sha256: string } | null {
     const platform = os.platform();
     const arch = os.arch();
+    let asset: string | undefined;
 
     if (platform === 'win32') {
-      if (arch === 'x64' || arch === 'arm64') {
-        return {
-          url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-windows-x86_64-signed.exe',
-          fileName: 'playit.exe',
-        };
-      }
-      return {
-        url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-windows-x86-signed.exe',
-        fileName: 'playit.exe',
-      };
-    }
-
-    if (platform === 'linux') {
-      if (arch === 'x64') {
-        return {
-          url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64',
-          fileName: 'playit',
-        };
-      }
-      if (arch === 'arm64' || arch === 'arm') {
-        return {
-          url: 'https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-aarch64',
-          fileName: 'playit',
-        };
+      if (arch === 'x64' || arch === 'arm64') asset = 'playit-windows-x86_64-signed.exe';
+      if (arch === 'ia32') asset = 'playit-windows-x86-signed.exe';
+    } else if (platform === 'linux') {
+      const architecture = { x64: 'amd64', arm64: 'aarch64', arm: 'armv7', ia32: 'i686' };
+      if (Object.hasOwn(architecture, arch)) {
+        asset = `playit-linux-${architecture[arch as keyof typeof architecture]}`;
       }
     }
 
-    return null;
+    if (!asset) return null;
+    return {
+      url: `https://github.com/playit-cloud/playit-agent/releases/download/v${managedVersion}/${asset}`,
+      fileName: path.basename(this.managedBinaryPath),
+      sha256: assetDigests[asset],
+    };
   }
 
-  /**
-   * Automatically download and install Playit into .nodepilot/bin/
-   */
   async installManagedBinary(): Promise<PlayitStatus> {
+    await this.ensureManagedBinary();
+    return this.getStatus();
+  }
+
+  private async ensureManagedBinary(): Promise<void> {
+    if (!this.installRequest) {
+      this.installRequest = this.downloadManagedBinary().finally(() => { this.installRequest = null; });
+    }
+    await this.installRequest;
+  }
+
+  private async downloadManagedBinary(): Promise<void> {
     const download = this.getDownloadUrl();
     if (!download) {
       throw new Error(`Automatic Playit installation is not supported for ${os.platform()} (${os.arch()}).`);
     }
+    if ((await this.getBinaryInfo(this.managedBinaryPath)).version === managedVersion) return;
 
     await mkdir(path.dirname(this.managedBinaryPath), { recursive: true });
-    const tempFile = `${this.managedBinaryPath}.tmp-${Date.now()}`;
+    const tempFile = `${this.managedBinaryPath}.tmp-${randomUUID()}`;
+    const signal = AbortSignal.timeout(90_000);
 
     try {
-      const response = await fetch(download.url, { redirect: 'follow' });
+      const response = await fetch(download.url, { redirect: 'follow', signal });
       if (!response.ok || !response.body) {
-        throw new Error(`Failed to download Playit agent from GitHub (${response.status} ${response.statusText}).`);
+        throw new Error(`GitHub returned HTTP ${response.status}.`);
       }
 
-      // @ts-ignore Node.js fetch ReadableStream compatibility
+      const hash = createHash('sha256');
+      let receivedBytes = 0;
+      const verifySize = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          receivedBytes += chunk.length;
+          if (receivedBytes > maxDownloadBytes) {
+            callback(new Error('The download exceeded the allowed size.'));
+            return;
+          }
+          hash.update(chunk);
+          callback(null, chunk);
+        },
+      });
       const nodeStream = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
-      await pipeline(nodeStream, createWriteStream(tempFile));
+      await pipeline(nodeStream, verifySize, createWriteStream(tempFile, { flags: 'wx', mode: 0o700 }), { signal });
 
-      if (existsSync(this.managedBinaryPath)) {
-        await unlink(this.managedBinaryPath).catch(() => undefined);
+      if (hash.digest('hex') !== download.sha256) {
+        throw new Error('The download did not match the official Playit SHA-256 checksum.');
       }
-
-      const { rename } = await import('node:fs/promises');
+      if (os.platform() !== 'win32') await chmod(tempFile, 0o755);
       await rename(tempFile, this.managedBinaryPath);
-
-      if (os.platform() !== 'win32') {
-        await chmod(this.managedBinaryPath, 0o755);
-      }
-
-      this.cachedBinaryPath = this.managedBinaryPath;
-      return this.getStatus();
-    } catch (err) {
+      this.binaryProbe = null;
+    } catch (error) {
       await unlink(tempFile).catch(() => undefined);
-      throw new Error(`Playit installation failed: ${err instanceof Error ? err.message : String(err)}`);
+      const detail = signal.aborted ? 'Download timed out.' : error instanceof Error ? error.message : String(error);
+      throw new Error(`Playit installation failed: ${detail}`);
     }
   }
 
@@ -122,9 +221,10 @@ export class PlayitService {
    * NodePilot's managed binary in .nodepilot/bin takes precedence.
    */
   async findBinaryPath(): Promise<{ path: string; isManaged: boolean } | null> {
-    if (existsSync(this.managedBinaryPath)) {
-      this.cachedBinaryPath = this.managedBinaryPath;
-      return { path: this.managedBinaryPath, isManaged: true };
+    for (const candidate of [this.managedBinaryPath, this.previousManagedBinaryPath]) {
+      if (existsSync(candidate)) {
+        return { path: candidate, isManaged: true };
+      }
     }
 
     if (this.cachedBinaryPath && existsSync(this.cachedBinaryPath)) {
@@ -162,8 +262,9 @@ export class PlayitService {
 
     // Try finding via `where` (win32) or `which` (unix)
     try {
-      const cmd = platform === 'win32' ? 'where playit.exe' : 'which playit';
-      const { stdout } = await execAsync(cmd);
+      const { stdout } = platform === 'win32'
+        ? await execFileAsync('where.exe', ['playit.exe'], probeOptions)
+        : await execFileAsync('which', ['playit'], probeOptions);
       const found = stdout.trim().split(/\r?\n/)[0]?.trim();
       if (found && existsSync(found)) {
         this.cachedBinaryPath = found;
@@ -193,16 +294,47 @@ export class PlayitService {
    */
   readSecretKey(): string | null {
     const secretPath = this.getSecretPath();
-    if (!secretPath || !existsSync(secretPath)) {
-      return null;
-    }
+    return secretPath ? readSecretFile(secretPath) : null;
+  }
+
+  private async getBinaryInfo(binaryPath: string): Promise<BinaryInfo> {
+    let key: string;
     try {
-      const content = readFileSync(secretPath, 'utf8');
-      const match = content.match(/secret_key\s*=\s*["']?([a-zA-Z0-9_-]+)["']?/);
-      return match ? match[1].trim() : null;
+      const stat = statSync(binaryPath);
+      if (!stat.isFile()) return { version: null, legacy: false };
+      key = `${binaryPath}:${stat.size}:${stat.mtimeMs}`;
     } catch {
-      return null;
+      return { version: null, legacy: false };
     }
+
+    if (this.binaryProbe?.key === key) return this.binaryProbe.result;
+    const result = this.probeVersion(binaryPath);
+    this.binaryProbe = { key, result };
+    return result;
+  }
+
+  private async probeVersion(binaryPath: string): Promise<BinaryInfo> {
+    for (const flag of ['version', '--version']) {
+      try {
+        const { stdout } = await execFileAsync(binaryPath, [flag], probeOptions);
+        const match = stdout.match(/^(?:playit(?:-cli)?(?: version)?\s+)?v?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)\s*$/im);
+        if (match) return { version: match[1], legacy: match[1].startsWith('0.') };
+      } catch {
+        // The Playit 2.x daemon does not expose a version command.
+      }
+    }
+    return { version: null, legacy: false };
+  }
+
+  private async requireCompatibleBinary(): Promise<string> {
+    const binary = await this.findBinaryPath();
+    if (binary && (await this.getBinaryInfo(binary.path)).legacy) return binary.path;
+
+    await this.ensureManagedBinary();
+    if (!(await this.getBinaryInfo(this.managedBinaryPath)).legacy) {
+      throw new Error('The NodePilot-managed Playit agent could not run on this computer.');
+    }
+    return this.managedBinaryPath;
   }
 
   /**
@@ -312,290 +444,263 @@ export class PlayitService {
   }
 
   /**
-   * Check if playit process is currently running on the host.
+   * Check for NodePilot's agent or an existing Playit process, excluding a pending claim.
    */
   async isProcessRunning(): Promise<boolean> {
-    if (this.childProcess && this.childProcess.exitCode === null && !this.childProcess.killed) {
-      return true;
-    }
-    if (this.childProcess && (this.childProcess.exitCode !== null || this.childProcess.killed)) {
-      this.childProcess = null;
-    }
+    if (this.childProcess && isLiveChild(this.childProcess)) return true;
+    this.childProcess = null;
 
-    const platform = os.platform();
     try {
-      if (platform === 'win32') {
-        const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq playit.exe" /NH');
-        return stdout.toLowerCase().includes('playit.exe');
-      } else {
-        const { stdout } = await execAsync('pgrep -x playit || true');
-        return stdout.trim().length > 0;
-      }
+      const windows = os.platform() === 'win32';
+      const { stdout } = windows
+        ? await execFileAsync('tasklist.exe', ['/FI', 'IMAGENAME eq playit.exe', '/FO', 'CSV', '/NH'], probeOptions)
+        : await execFileAsync('pgrep', ['-x', 'playit'], probeOptions);
+      const claimPid = this.pendingClaim?.child.pid;
+      return stdout.split(/\r?\n/).some((line) => {
+        const pid = windows ? line.match(/^"playit\.exe","(\d+)"/i)?.[1] : line.trim();
+        return /^\d+$/.test(pid ?? '') && Number(pid) !== claimPid;
+      });
     } catch {
       return false;
     }
   }
 
-  /**
-   * Fetch current Playit installation and runtime status.
-   */
   async getStatus(): Promise<PlayitStatus> {
+    if (this.pendingClaim) this.promoteClaim(this.pendingClaim);
+
     const binary = await this.findBinaryPath();
+    const { version } = binary ? await this.getBinaryInfo(binary.path) : { version: null };
+    const isRunning = binary !== null && await this.isProcessRunning();
     const secretPath = this.getSecretPath();
-    const secretExists = Boolean(secretPath && existsSync(secretPath));
-
-    if (!binary) {
-      return {
-        installed: false,
-        isManaged: false,
-        binaryPath: null,
-        version: null,
-        isRunning: false,
-        secretExists,
-        secretPath,
-        claimUrl: null,
-      };
-    }
-
-    let version: string | null = null;
-    try {
-      const { stdout } = await execAsync(`"${binary.path}" version`);
-      version = stdout.trim();
-    } catch {
-      // Older or customized versions might not return cleanly
-    }
-
-    const isRunning = await this.isProcessRunning();
 
     return {
-      installed: true,
-      isManaged: binary.isManaged,
-      binaryPath: binary.path,
+      installed: binary !== null,
+      isManaged: binary?.isManaged ?? false,
+      binaryPath: binary?.path ?? null,
       version,
       isRunning,
-      secretExists,
+      secretExists: Boolean(secretPath && readSecretFile(secretPath)),
       secretPath,
-      claimUrl: this.activeClaimUrl,
+      claimUrl: this.pendingClaim?.result?.claimUrl ?? null,
+      claimError: this.claimError,
     };
   }
 
-  /**
-   * Directly save or replace the Playit secret key in playit.toml, then launch the agent.
-   * This solves the issue of users hitting the max agent limit on existing Playit accounts.
-   */
   async setSecretKey(secretKey: string): Promise<PlayitStatus> {
     const trimmed = secretKey.trim();
-    if (!trimmed) {
-      throw new Error('Secret key cannot be empty.');
-    }
+    if (!trimmed) throw new Error('Secret key cannot be empty.');
+    if (!validSecretKey(trimmed)) throw new Error('Enter the complete hexadecimal secret key from Playit.');
 
     const secretPath = this.getSecretPath();
-    if (!secretPath) {
-      throw new Error('Could not resolve Playit configuration path on this operating system.');
-    }
+    if (!secretPath) throw new Error('Could not resolve the Playit configuration path.');
 
-    // Stop currently running agent if any before modifying credentials
-    await this.stopAgent().catch(() => undefined);
-
-    await mkdir(path.dirname(secretPath), { recursive: true });
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(secretPath, `secret_key = "${trimmed}"\n`, 'utf8');
-
-    // Auto-launch the agent daemon now that key is configured
+    await this.cancelPendingClaim();
+    writeSecretFile(secretPath, trimmed);
+    if (this.childProcess) killChild(this.childProcess);
     return this.startAgent();
   }
 
-  /**
-   * Reset / unlink Playit credentials by stopping any active agent and removing playit.toml.
-   */
   async resetSecret(): Promise<PlayitStatus> {
-    await this.stopAgent().catch(() => undefined);
-
-    if (this.exchangeProcess && !this.exchangeProcess.killed) {
-      try {
-        this.exchangeProcess.kill();
-      } catch {}
-      this.exchangeProcess = null;
-    }
-
-    this.activeClaimUrl = null;
+    await this.cancelPendingClaim();
+    if (this.childProcess) killChild(this.childProcess);
+    this.childProcess = null;
 
     const secretPath = this.getSecretPath();
-    if (secretPath && existsSync(secretPath)) {
-      await unlink(secretPath).catch(() => undefined);
+    if (secretPath) {
+      await unlink(secretPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
     }
-
     return this.getStatus();
   }
 
-  /**
-   * Start account claim workflow: spawns the playit agent in auto-run mode with stdout,
-   * captures the live claim URL issued by playit.gg, and keeps the agent process running
-   * so playit.gg immediately detects the agent as ONLINE when the user opens the page.
-   */
-  async claimAccount(): Promise<{ claimUrl: string; claimCode: string }> {
-    let status = await this.getStatus();
-    if (!status.installed || !status.binaryPath) {
-      // Auto-install managed Playit binary so 1-click claim succeeds without manual pre-install
-      status = await this.installManagedBinary();
+  async claimAccount(): Promise<ClaimResult> {
+    if (this.pendingClaim?.result) return this.pendingClaim.result;
+    if (this.claimRequest) return this.claimRequest;
+
+    this.claimError = undefined;
+    const request = this.openClaim(this.claimGeneration);
+    this.claimRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (this.claimRequest === request) this.claimRequest = null;
     }
+  }
 
-    // Stop existing process if running to start fresh claim session
-    await this.stopAgent().catch(() => undefined);
-
-    if (this.exchangeProcess && !this.exchangeProcess.killed) {
-      try {
-        this.exchangeProcess.kill();
-      } catch {}
-      this.exchangeProcess = null;
-    }
-
-    // Remove existing secret file before starting claim, otherwise
-    // playit CLI loads the existing secret and never prints a claim URL
+  private async openClaim(generation: number): Promise<ClaimResult> {
+    const binaryPath = await this.requireCompatibleBinary();
     const secretPath = this.getSecretPath();
-    if (secretPath && existsSync(secretPath)) {
-      await unlink(secretPath).catch(() => undefined);
+    if (!secretPath) throw new Error('Could not resolve the Playit configuration path.');
+
+    await mkdir(path.dirname(secretPath), { recursive: true });
+    const stage = await mkdtemp(path.join(path.dirname(secretPath), '.nodepilot-claim-'));
+    const stagePath = path.join(stage, 'playit.toml');
+    if (generation !== this.claimGeneration) {
+      cleanClaimStage(stagePath);
+      throw new Error('Playit account linking was cancelled.');
     }
-    this.activeClaimUrl = null;
 
-    const binaryPath = status.binaryPath!;
-
-    return new Promise<{ claimUrl: string; claimCode: string }>((resolve, reject) => {
-      let resolved = false;
-
-      const args: string[] = [];
-      if (secretPath) {
-        args.push('--secret_path', secretPath);
+    return new Promise<ClaimResult>((resolve, reject) => {
+      let child: ChildProcess;
+      try {
+        child = spawn(binaryPath, ['--secret_path', stagePath, '--stdout'], {
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+      } catch {
+        cleanClaimStage(stagePath);
+        reject(new Error('Could not launch the Playit agent. Try installing it again.'));
+        return;
       }
-      args.push('--stdout');
-
-      const child: ChildProcess = spawn(binaryPath, args, {
-        detached: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
 
       const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          try {
-            child.kill();
-          } catch {}
-          reject(new Error('Timed out waiting for Playit agent to connect and generate claim URL.'));
-        }
+        this.failClaim(claim, 'Timed out waiting for a Playit claim URL. Check that this computer can reach playit.gg and try again.');
       }, 30_000);
+      timeout.unref();
+      const claim: PendingClaim = { child, stagePath, secretPath, result: null, timeout, reject };
+      this.pendingClaim = claim;
 
-      this.childProcess = child;
+      const buffers = { stdout: '', stderr: '' };
+      const handleOutput = (stream: keyof typeof buffers, chunk: Buffer) => {
+        if (this.pendingClaim !== claim) return;
+        buffers[stream] = stripVTControlCharacters(buffers[stream] + chunk.toString()).slice(-4_096);
+        if (claim.result) return;
+        const match = buffers[stream].match(claimUrlPattern);
+        if (!match) return;
 
-      const handleOutput = (chunk: Buffer) => {
-        // Strip ANSI escape codes in case terminal formatting or color codes are emitted
-        const text = chunk.toString().replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
-        const match = text.match(/https:\/\/playit\.gg\/claim\/([a-zA-Z0-9]+)/);
-        if (match && !resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          const claimUrl = match[0];
-          const claimCode = match[1];
-          this.activeClaimUrl = claimUrl;
-          resolve({ claimUrl, claimCode });
-        }
+        clearTimeout(claim.timeout);
+        claim.timeout = setTimeout(() => {
+          if (!this.promoteClaim(claim)) {
+            this.failClaim(claim, 'The Playit claim expired. Choose Link Account to generate a new link.');
+          }
+        }, 10 * 60_000);
+        claim.timeout.unref();
+
+        claim.result = { claimUrl: `https://playit.gg/claim/${match[1]}`, claimCode: match[1] };
+        resolve(claim.result);
       };
 
-      child.stdout?.on('data', handleOutput);
-      child.stderr?.on('data', handleOutput);
-
-      child.once('error', (err: Error) => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          this.childProcess = null;
-          reject(err);
-        }
+      child.stdout?.on('data', (chunk: Buffer) => handleOutput('stdout', chunk));
+      child.stderr?.on('data', (chunk: Buffer) => handleOutput('stderr', chunk));
+      child.once('error', () => {
+        this.failClaim(claim, 'Could not run the Playit agent. Try installing it again.');
       });
-
-      child.once('exit', () => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          this.childProcess = null;
-          reject(new Error('Playit agent exited before providing a claim URL.'));
+      child.once('close', (code: number | null) => {
+        if (this.childProcess === child) this.childProcess = null;
+        if (this.pendingClaim === claim && !this.promoteClaim(claim)) {
+          this.failClaim(claim, claimExitMessage(buffers.stdout + '\n' + buffers.stderr, code, Boolean(claim.result)));
         }
+        cleanClaimStage(stagePath);
       });
     });
   }
 
-  /**
-   * Start the Playit agent if installed and not already running.
-   */
-  async startAgent(): Promise<PlayitStatus> {
-    const status = await this.getStatus();
-    if (!status.installed || !status.binaryPath) {
-      throw new Error('Playit CLI is not installed on this host.');
-    }
-
-    if (status.isRunning) {
-      return status;
-    }
+  private promoteClaim(claim: PendingClaim): boolean {
+    if (this.pendingClaim !== claim || !claim.result) return false;
+    const newKey = readSecretFile(claim.stagePath);
+    if (!newKey) return false;
 
     try {
-      const secretPath = this.getSecretPath();
-      const baseDir = this.dataDirectory || path.resolve('.nodepilot');
-      await mkdir(baseDir, { recursive: true }).catch(() => undefined);
-      const logPath = path.join(baseDir, 'playit.log');
+      writeSecretFile(claim.secretPath, newKey);
+    } catch {
+      this.failClaim(claim, 'Playit approved this link, but NodePilot could not save the new key. Check the Playit configuration folder permissions and try again.');
+      return false;
+    }
 
-      const args: string[] = [];
-      if (secretPath && existsSync(secretPath)) {
-        args.push('--secret_path', secretPath);
-      }
-      args.push('-l', logPath, 'start');
+    this.clearClaim(claim);
+    this.claimError = undefined;
+    if (isLiveChild(claim.child)) {
+      if (this.childProcess) killChild(this.childProcess);
+      this.childProcess = claim.child;
+      claim.child.unref();
+      if (claim.child.stdout instanceof Socket) claim.child.stdout.unref();
+      if (claim.child.stderr instanceof Socket) claim.child.stderr.unref();
+    }
+    return true;
+  }
 
-      // Spawn daemon process writing logs to playit.log
-      const child = spawn(status.binaryPath, args, {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-
-      child.on('exit', () => {
-        if (this.childProcess === child) {
-          this.childProcess = null;
-        }
-      });
-      child.on('error', () => {
-        if (this.childProcess === child) {
-          this.childProcess = null;
-        }
-      });
-
-      child.unref();
-      this.childProcess = child;
-
-      // Small delay to let process initialize
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      return this.getStatus();
-    } catch (err) {
-      throw new Error(`Failed to start Playit agent: ${err instanceof Error ? err.message : String(err)}`);
+  private failClaim(claim: PendingClaim, message: string): void {
+    if (this.pendingClaim !== claim) return;
+    killChild(claim.child);
+    this.clearClaim(claim);
+    if (claim.result) {
+      this.claimError = message;
+    } else {
+      claim.reject(new Error(message));
     }
   }
 
-  /**
-   * Stop the Playit agent process.
-   */
-  async stopAgent(): Promise<PlayitStatus> {
-    const platform = os.platform();
-    try {
-      if (platform === 'win32') {
-        await execAsync('taskkill /F /IM playit.exe /T');
-      } else {
-        await execAsync('pkill -x playit');
-      }
-    } catch {
-      // Process may already be stopped
+  private clearClaim(claim: PendingClaim): void {
+    clearTimeout(claim.timeout);
+    this.pendingClaim = null;
+    cleanClaimStage(claim.stagePath);
+  }
+
+  async cancelPendingClaim(): Promise<void> {
+    this.claimGeneration += 1;
+    this.claimRequest = null;
+    if (this.pendingClaim) this.failClaim(this.pendingClaim, 'Playit account linking was cancelled.');
+    this.claimError = undefined;
+  }
+
+  async startAgent(): Promise<PlayitStatus> {
+    if (this.pendingClaim || this.claimRequest) return this.getStatus();
+
+    const secretPath = this.getSecretPath();
+    if (!secretPath || !readSecretFile(secretPath)) {
+      throw new Error('Link a Playit account or enter a Playit agent secret key before starting the tunnel agent.');
     }
 
+    const binaryPath = await this.requireCompatibleBinary();
+    if (this.pendingClaim || this.claimRequest || await this.isProcessRunning()) return this.getStatus();
+
+    const baseDir = this.dataDirectory || path.resolve('.nodepilot');
+    await mkdir(baseDir, { recursive: true });
+    if (this.pendingClaim || this.claimRequest || (this.childProcess && isLiveChild(this.childProcess))) {
+      return this.getStatus();
+    }
+
+    const logPath = path.join(baseDir, 'playit.log');
+    const child = spawn(binaryPath, ['--secret_path', secretPath, '--stdout', '-l', logPath, 'start'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    const release = () => {
+      if (this.childProcess === child) this.childProcess = null;
+    };
+    child.once('exit', release);
+    child.once('error', release);
+    child.unref();
+    this.childProcess = child;
+
+    // Surface immediate launch errors instead of reporting a stopped agent as a success.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (this.childProcess === null) {
+      throw new Error('Playit stopped during startup. Check the Playit log in the NodePilot data directory.');
+    }
+    return this.getStatus();
+  }
+
+  /**
+   * Stop the Playit agent after an explicit user request.
+   */
+  async stopAgent(): Promise<PlayitStatus> {
+    await this.cancelPendingClaim();
+    if (this.childProcess) killChild(this.childProcess);
     this.childProcess = null;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      if (os.platform() === 'win32') {
+        await execFileAsync('taskkill.exe', ['/F', '/IM', 'playit.exe', '/T'], probeOptions);
+      } else {
+        await execFileAsync('pkill', ['-x', 'playit'], probeOptions);
+      }
+    } catch {
+      // Process may already be stopped.
+    }
+
     return this.getStatus();
   }
 }

@@ -175,42 +175,22 @@ test('PlayitService setSecretKey and resetSecret handle credentials cleanly', as
     const playit = new PlayitService(tempDir);
     // Monkey-patch getSecretPath to use our temp location
     playit.getSecretPath = () => fakeSecretPath;
+    playit.startAgent = () => playit.getStatus();
+    playit.stopAgent = () => playit.getStatus();
 
     // Reject empty
     await assert.rejects(async () => playit.setSecretKey('   '), /cannot be empty/);
 
     // Save key
-    await playit.setSecretKey('test-secret-key-12345').catch(() => undefined);
+    await playit.setSecretKey('abcdef0123456789');
     const { readFile } = await import('node:fs/promises');
     const content = await readFile(fakeSecretPath, 'utf8');
-    assert.ok(content.includes('secret_key = "test-secret-key-12345"'));
+    assert.ok(content.includes('secret_key = "abcdef0123456789"'));
 
     // Reset key
     await playit.resetSecret();
     const { existsSync } = await import('node:fs');
     assert.equal(existsSync(fakeSecretPath), false);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('PlayitService claimAccount resets existing secret file so fresh claim URL can be emitted', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-playit-claim-'));
-  const fakeSecretPath = path.join(tempDir, 'playit.toml');
-
-  try {
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(fakeSecretPath, 'secret_key = "stale-key"\n', 'utf8');
-
-    const playit = new PlayitService(tempDir);
-    playit.getSecretPath = () => fakeSecretPath;
-
-    const { existsSync } = await import('node:fs');
-    assert.strictEqual(existsSync(fakeSecretPath), true);
-
-    // Calling resetSecret removes the file
-    await playit.resetSecret();
-    assert.strictEqual(existsSync(fakeSecretPath), false);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -223,7 +203,9 @@ test('AutoStartService records diagnostics and handles server autostart graceful
   try {
     const db = openDatabase(dbPath);
     const repo = new ServerRepository(db);
-    const playit = new PlayitService();
+    const playit = new PlayitService(tempDir);
+    playit.findBinaryPath = async () => null;
+    playit.getSecretPath = () => path.join(tempDir, 'playit.toml');
 
     // Mock runtime
     const startedServers: string[] = [];

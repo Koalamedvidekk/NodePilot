@@ -474,6 +474,7 @@ export interface PlayitStatus {
   secretExists: boolean;
   secretPath: string | null;
   claimUrl?: string | null;
+  claimError?: string | null;
   error?: string | null;
 }
 

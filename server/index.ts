@@ -1196,7 +1196,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.post('/api/host/playit/install', async () => {
     autoStart.log('info', 'Downloading official Playit.gg agent binary...');
-    const status = await playit.installManagedBinary();
+    const status = await playit.installManagedBinary().catch((error: unknown) => {
+      throw new AppError(502, 'playit_install_failed', errorMessage(error));
+    });
     autoStart.log('info', `Playit.gg binary successfully installed (${status.version ?? 'ready'}).`);
     return { ok: true, playit: status };
   });
@@ -1208,7 +1210,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     } catch (error) {
       throw new AppError(502, 'playit_claim_failed', 'Could not open Playit account linking: ' + errorMessage(error));
     }
-    autoStart.log('info', `Generated Playit account linking link: ${claimResult.claimUrl}`);
+    autoStart.log('info', 'Playit account linking is awaiting approval.');
     return {
       ok: true,
       claimUrl: claimResult.claimUrl,
@@ -1218,7 +1220,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/playit/start', async () => {
-    const status = await playit.startAgent();
+    const status = await playit.startAgent().catch((error: unknown) => {
+      throw new AppError(502, 'playit_start_failed', errorMessage(error));
+    });
     autoStart.log('info', 'User started Playit.gg agent via Host Settings.');
     return { ok: true, playit: status };
   });
@@ -1652,6 +1656,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     await serverVersions.stop();
     await worlds.stop();
     await addons.stop();
+    await playit.cancelPendingClaim();
     await tor.stop();
     bridge.shutdown();
     await metrics.shutdown();

@@ -13,19 +13,25 @@ export function ServerTunnelCard({ server }: { server: Server }) {
   const [copied, setCopied] = useState(false);
   const [copiedPort, setCopiedPort] = useState(false);
   const [error, setError] = useState<string>();
+  const [loadError, setLoadError] = useState<string>();
   const [success, setSuccess] = useState<string>();
-  const [claimUrl, setClaimUrl] = useState<string | null>(null);
   const [claimingPlayit, setClaimingPlayit] = useState(false);
   const [claimCopied, setClaimCopied] = useState(false);
+  const claimUrl = playit?.claimUrl;
+  const needsAccountLink = !playit?.secretExists;
+  const displayedError = error ?? (claimingPlayit ? null : playit?.claimError) ?? loadError;
 
   const loadTunnel = async () => {
     try {
-      setError(undefined);
       const res = await api.getServerTunnel(server.id);
       setTunnel(res.tunnel);
       setPlayit(res.playit);
+      setLoadError(undefined);
+      if (claimUrl && !res.playit.claimUrl && res.playit.secretExists && !res.playit.claimError) {
+        setSuccess('Playit account linked. You can now configure the server tunnel.');
+      }
     } catch (cause) {
-      setError(errorMessage(cause));
+      setLoadError(errorMessage(cause));
     } finally {
       setLoading(false);
     }
@@ -49,39 +55,12 @@ export function ServerTunnelCard({ server }: { server: Server }) {
 
   useEffect(() => {
     void loadTunnel();
-    // Fast polling (3.5s) while waiting for tunnel creation, relaxed (15s) once connected
+    const pollInterval = claimUrl ? 2_500 : hasPublicAddress ? 15_000 : 3_500;
     const interval = window.setInterval(() => {
       void loadTunnel();
-    }, hasPublicAddress ? 15_000 : 3_500);
+    }, pollInterval);
     return () => window.clearInterval(interval);
-  }, [server.id, hasPublicAddress]);
-
-  // Auto-detect when Playit account is linked while a claim is in-flight
-  useEffect(() => {
-    const activeClaim = claimUrl || playit?.claimUrl;
-    if (!activeClaim || playit?.secretExists) return undefined;
-
-    let active = true;
-    const interval = window.setInterval(async () => {
-      try {
-        const next = await api.getPlayitStatus();
-        if (!active) return;
-        if (next.secretExists) {
-          setPlayit(next);
-          setClaimUrl(null);
-          setSuccess('🎉 Playit account linked! Now create your server tunnel on Playit.gg.');
-          void loadTunnel();
-        }
-      } catch {
-        // Continue polling silently
-      }
-    }, 2_500);
-
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-    };
-  }, [claimUrl, playit?.claimUrl, playit?.secretExists]);
+  }, [server.id, hasPublicAddress, claimUrl]);
 
   const handleClaimPlayit = async () => {
     setClaimingPlayit(true);
@@ -90,8 +69,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
 
     try {
       const res = await api.claimPlayitAccount();
-      setClaimUrl(res.claimUrl);
-      setPlayit(res.playit);
+      setPlayit({ ...res.playit, claimUrl: res.claimUrl });
       setSuccess('Opening Playit to finish linking. Return to NodePilot afterwards.');
       openPlayitClaim(res.claimUrl);
     } catch (cause) {
@@ -211,7 +189,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
           <p className="tunnel-intro">
             Friends outside your local Wi-Fi can join your server directly without you having to open router ports or expose your home IP address.
           </p>
-          {error && <div className="notice-banner is-error"><Icon name="warning" size={16} /><span>{error}</span></div>}
+          {displayedError && <div className="notice-banner is-error" role="alert"><Icon name="warning" size={16} /><span>{displayedError}</span></div>}
           {success && <div className="notice-banner is-success"><Icon name="check" size={16} /><span>{success}</span></div>}
           <div className="tunnel-actions-row">
             <button
@@ -258,10 +236,10 @@ export function ServerTunnelCard({ server }: { server: Server }) {
       </div>
 
       <div className="tunnel-card-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {error && (
-          <div className="notice-banner is-error">
+        {displayedError && (
+          <div className="notice-banner is-error" role="alert">
             <Icon name="warning" size={16} />
-            <span>{error}</span>
+            <span>{displayedError}</span>
           </div>
         )}
 
@@ -273,7 +251,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
         )}
 
         {/* Public Address Display Box */}
-        {hasPublicAddress ? (
+        {hasPublicAddress && !needsAccountLink && !claimUrl ? (
           <div className="public-address-banner">
             <div className="public-address-row">
               <div className="public-address-info">
@@ -311,15 +289,15 @@ export function ServerTunnelCard({ server }: { server: Server }) {
               </div>
             )}
           </div>
-        ) : !playit?.secretExists || Boolean(claimUrl) ? (
+        ) : needsAccountLink || claimUrl ? (
           <div className="notice-banner is-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.35)', background: 'rgba(56, 189, 248, 0.08)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Icon name="wifi" size={18} />
               <strong style={{ fontSize: '15px', color: 'var(--cyan)' }}>Step 1: Link your Playit.gg Account</strong>
             </div>
             <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.5 }}>
-              Your Playit agent is not linked to an account yet. Link this computer with 1 click so Playit can assign a public address to your server.
-              {' '}Playit will open in this tab; return to NodePilot after approving the agent.
+              Link this computer to your Playit account so Playit can assign a public address to your server.
+              {' '}Playit opens in this tab. Return to NodePilot after approving the agent.
             </p>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
               <button
@@ -329,12 +307,12 @@ export function ServerTunnelCard({ server }: { server: Server }) {
                 disabled={claimingPlayit}
               >
                 <Icon name="arrowUpRight" size={15} />
-                <span>{claimingPlayit ? 'Connecting Agent…' : 'Link Playit Account (1-Click)'}</span>
+                <span>{claimingPlayit ? 'Preparing Link…' : 'Link Playit Account (1-Click)'}</span>
               </button>
-              {(claimUrl || playit?.claimUrl) && (
+              {claimUrl && (
                 <>
                   <a
-                    href={claimUrl || playit?.claimUrl || '#'}
+                    href={claimUrl}
                     className="button button-secondary"
                   >
                     <Icon name="arrowUpRight" size={15} />
@@ -344,9 +322,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
                     type="button"
                     className="button button-secondary"
                     onClick={async () => {
-                      const link = claimUrl || playit?.claimUrl;
-                      if (!link) return;
-                      await navigator.clipboard.writeText(link).catch(() => undefined);
+                      await navigator.clipboard.writeText(claimUrl).catch(() => undefined);
                       setClaimCopied(true);
                       setTimeout(() => setClaimCopied(false), 2000);
                     }}
@@ -357,7 +333,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
                 </>
               )}
             </div>
-            {(claimUrl || playit?.claimUrl) && (
+            {claimUrl && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px', color: 'var(--cyan)' }}>
                 <span className="button-loader" style={{ width: '13px', height: '13px' }} />
                 <span>Waiting for account link on playit.gg… NodePilot will detect it automatically!</span>
@@ -438,7 +414,7 @@ export function ServerTunnelCard({ server }: { server: Server }) {
           </div>
           <div className="metric-chip">
             <span className="metric-chip-label">Playit Agent</span>
-            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{playit?.isRunning ? 'Running' : 'Stopped'}</span>
+            <span className="metric-chip-value" style={{ fontSize: '0.95rem' }}>{claimUrl ? 'Awaiting Approval' : needsAccountLink ? 'Link Required' : playit?.isRunning ? 'Running' : 'Stopped'}</span>
           </div>
           <div className="metric-chip">
             <span className="metric-chip-label">Minecraft Server</span>
