@@ -70,6 +70,10 @@ Or install directly via a one-line PowerShell command:
 irm https://raw.githubusercontent.com/Koalamedvidekk/NodePilot/main/install.ps1 | iex
 ```
 
+Select a drive from the installer menu. Press Enter for the default
+`%USERPROFILE%\NodePilot`, or choose another drive to install to a folder such as
+`D:\NodePilot`. The default server data directory is `.nodepilot` inside that folder.
+
 #### Linux & macOS
 ```bash
 git clone https://github.com/Koalamedvidekk/NodePilot.git
