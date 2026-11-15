@@ -114,4 +114,11 @@ test('ZIPs without directory markers detect saved worlds and inspect a generic s
   assert.equal(inspection.canImport, true);
   assert.deepEqual(await readFile(archive), source);
   assert.deepEqual(await (await import('node:fs/promises')).readdir(path.join(root, 'data/import-inspections')), []);
+  const unsafe = await zip([['worldx/evil.dat', 'Never extract outside the managed copy']]);
+  let offset: number;
+  while ((offset = unsafe.indexOf(Buffer.from('worldx/evil.dat'))) !== -1) unsafe.set(Buffer.from('../out/evil.dat'), offset);
+  const unsafePath = path.join(root, 'unsafe.zip');
+  await writeFile(unsafePath, unsafe);
+  await assert.rejects(service.inspectArchive(unsafePath), { code: 'invalid_archive', statusCode: 400 });
+  assert.deepEqual(await readFile(unsafePath), unsafe);
 });

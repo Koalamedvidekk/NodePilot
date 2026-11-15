@@ -421,6 +421,9 @@ async function readArchiveEntries(archivePath: string): Promise<ArchiveFile[]> {
       return { relativePath, archivePath: entry.rawPath, size: entry.size, directory: entry.directory };
     }).filter((entry) => Boolean(entry.relativePath));
     return files;
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(400, 'invalid_archive', 'The ZIP could not be inspected safely. Upload a valid archive containing only portable relative paths.');
   } finally {
     zip.close();
   }

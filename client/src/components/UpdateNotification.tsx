@@ -108,7 +108,7 @@ export function UpdateNotification() {
   if (!shouldShow || !release || !update) return null;
 
   const installDescription = update.canAutoInstall
-    ? 'Download now verifies the signed release package checksum, then restarts NodePilot after it is safely staged.'
+    ? 'Download now verifies the release package checksum, then restarts NodePilot after it is safely staged.'
     : (update.autoInstallReason ?? 'Download now opens the official GitHub release page for this installation.');
 
   return (

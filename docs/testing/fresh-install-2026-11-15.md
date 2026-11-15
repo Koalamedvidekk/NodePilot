@@ -1,4 +1,4 @@
-# Fresh-install verification for v0.1.24
+# Fresh-install verification for v0.1.24 and v0.1.25
 
 The public v0.1.23 universal release was downloaded into a new temporary directory,
 its SHA-256 verified, and started with `start.bat`. It installed its own npm
@@ -27,6 +27,9 @@ No existing game servers were used.
 - ZIPs without explicit directory entries hid their worlds during inspection.
   ZIP inspection now derives worlds from their metadata paths and safely inspects
   a bounded, staged server JAR to identify generic `server.jar` archives.
+- A malformed server ZIP was rejected safely, but the ZIP reader's path-validation
+  error became an internal 500 response. v0.1.25 classifies that failure as a
+  client validation error and retains explicit size-limit error responses.
 - The production dependency lock was refreshed to remove the three advisories
   reported during the fresh install. The Tor PIN-removal error now explains that
   private access must be disabled first.
@@ -65,6 +68,16 @@ These used real downloads, Minecraft processes, HTTP requests and browser contro
 - The release workflow verifies Windows and Linux before publishing. It now also
   runs the player-detail and mod-descriptor regressions explicitly on Windows.
 
+## Packaged update
+
+The real Settings update from v0.1.23 to v0.1.24 completed and reconnected the
+browser automatically. Its restart overlay remained visible while the backend
+was unavailable. All 909 game files retained their hashes; server configurations,
+the PIN-bearing `.env`, browser accounts, saved Onion address and existing OS
+startup registration also remained unchanged. The update popup appeared for the
+published release, and choosing **Later** left **Install & Restart** available in
+Settings.
+
 ## Scope
 
 The browser-game check used an Eaglercraft 1.8-compatible protocol client, not a
@@ -73,4 +86,6 @@ Linux runtime interaction was not repeated manually on this Windows host; Linux
 checks run in CI. Existing OS startup registration and Playit account credentials
 were left unchanged. Fresh OS installations without Java/Tor, authenticated
 Microsoft player logins, and arbitrary third-party modpacks were not manually
-exercised. A real packaged self-update is checked after the release is published.
+exercised. The v0.1.25 follow-up adds the malformed-archive HTTP regression and
+clarifies that the update notification verifies a checksum, without claiming a
+cryptographic release signature.

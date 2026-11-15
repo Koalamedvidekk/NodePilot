@@ -217,6 +217,22 @@ process.on('message', (message) => {
   }));
   assert.notEqual(zip.port, directory.port);
   console.log('PASS Wrapped Forge ZIP import accepts directory entries and retains worlds, mods and launch files.');
+  const unsafe = new ZipFile();
+  unsafe.addBuffer(Buffer.from('This must never be extracted'), 'worldx/evil.dat');
+  unsafe.end();
+  const unsafePath = path.join(root, 'unsafe.zip');
+  await pipeline(unsafe.outputStream, createWriteStream(unsafePath, { flags: 'wx' }));
+  const unsafeBytes = await readFile(unsafePath);
+  let offset;
+  while ((offset = unsafeBytes.indexOf(Buffer.from('worldx/evil.dat'))) !== -1) unsafeBytes.set(Buffer.from('../out/evil.dat'), offset);
+  const unsafeForm = new FormData();
+  unsafeForm.append('file', new Blob([unsafeBytes], { type: 'application/zip' }), 'unsafe.zip');
+  const managedBefore = await readdir(serversDirectory);
+  const rejected = await request('/imports/upload-archive', unsafeForm);
+  assert.equal(rejected.status, 400, JSON.stringify(rejected.body));
+  assert.equal(rejected.body.error, 'invalid_archive');
+  assert.deepEqual(await readdir(serversDirectory), managedBefore);
+  console.log('PASS Unsafe ZIP paths return an actionable validation error without changing managed servers.');
 } catch (error) {
   if (output) console.error('Isolated backend output:\n' + output);
   throw error;
