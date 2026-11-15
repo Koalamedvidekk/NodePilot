@@ -78,6 +78,13 @@ startup registration also remained unchanged. The update popup appeared for the
 published release, and choosing **Later** left **Install & Restart** available in
 Settings.
 
+The next real update, v0.1.24 to v0.1.25, was installed using the popup's
+**Download now** action. The browser reconnected with the new client bundle and
+backend version. The same 909 game files, server/world catalogue, configuration,
+accounts, Onion identity and startup registration were preserved. Repeating the
+unsafe server-ZIP request against the installed v0.1.25 returned HTTP 400 with
+`invalid_archive`. Both releases passed their Windows and Linux CI workflows.
+
 ## Scope
 
 The browser-game check used an Eaglercraft 1.8-compatible protocol client, not a
