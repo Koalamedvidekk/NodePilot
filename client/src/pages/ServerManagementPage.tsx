@@ -8,13 +8,14 @@ import { UsagePanel } from './UsagePanel';
 import { ServerSettingsPanel } from './ServerSettingsPanel';
 import { VersionsPanel } from './VersionsPanel';
 import { WorldsPanel } from './WorldsPanel';
+import { BrowserPlayersPanel } from './BrowserPlayersPanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServerTunnelCard } from '../components/ServerTunnelCard';
 import type { ConsoleLine, FileEntry, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
-type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'addons' | 'versions' | 'worlds' | 'properties' | 'files' | 'settings';
+type ManagementTab = 'overview' | 'usage' | 'console' | 'players' | 'browser-access' | 'addons' | 'versions' | 'worlds' | 'properties' | 'files' | 'settings';
 
 export type AddonCategory = 'plugins' | 'mods' | null;
 
@@ -30,6 +31,7 @@ function tabFromPath(pathname: string): ManagementTab {
   if (pathname.endsWith('/usage')) return 'usage';
   if (pathname.endsWith('/console')) return 'console';
   if (pathname.endsWith('/players')) return 'players';
+  if (pathname.endsWith('/browser-access')) return 'browser-access';
   if (pathname.endsWith('/versions')) return 'versions';
   if (pathname.endsWith('/worlds')) return 'worlds';
   if (pathname.endsWith('/addons') || pathname.endsWith('/plugins') || pathname.endsWith('/mods')) return 'addons';
@@ -830,6 +832,7 @@ export function ServerManagementPage() {
     { tab: 'usage', label: 'Usage', icon: 'activity', to: `${base}/usage` },
     { tab: 'console', label: 'Console', icon: 'terminal', to: `${base}/console` },
     { tab: 'players', label: 'Players', icon: 'users', to: `${base}/players` },
+    { tab: 'browser-access', label: 'Browser Players', icon: 'users', to: `${base}/browser-access` },
     ...(addonTab ? [addonTab] : []),
     { tab: 'versions', label: 'Versions', icon: 'refresh', to: `${base}/versions` },
     { tab: 'worlds', label: 'Worlds', icon: 'box', to: `${base}/worlds` },
@@ -865,6 +868,7 @@ export function ServerManagementPage() {
       {tab === 'usage' && <UsagePanel server={server} />}
       {tab === 'console' && <ConsolePanel server={server} />}
       {tab === 'players' && <PlayersPanel server={server} />}
+      {tab === 'browser-access' && <BrowserPlayersPanel key={server.id} server={server} />}
       {tab === 'versions' && <VersionsPanel key={server.id} server={server} onServerUpdated={applyVersionServerUpdate} />}
       {tab === 'worlds' && <WorldsPanel key={server.id} server={server} />}
       {tab === 'addons' && (

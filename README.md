@@ -204,6 +204,42 @@ world folders stays server-wide. See the [Worlds guide](docs/worlds.md) for deta
 For automatic startup when a player joins and Minecraft startup notices, see the
 [Auto-Wake guide](docs/auto-wake.md).
 
+## Browser Players
+
+Open a server and choose **Browser Players** to prepare an Eaglercraft gateway.
+The pinned gateway currently targets Paper/Purpur 1.19 through 1.21.11 and
+Eaglercraft 1.8/1.12.2 clients. Minecraft 26.x and other server software show an
+availability explanation. This integration remains experimental until the exact
+server and client combination has passed a playable connection check.
+
+Stop Minecraft, choose **Set Up**, and wait for the verified gateway components
+to download. Review the connection and authentication changes, select the
+approval checkbox, and choose **Approve & Apply Setup**. Setup backs up the
+affected configuration, moves the Minecraft backend to a private listener, and
+delegates normal Java authentication to a managed Velocity proxy. Choose
+**Enable** to start the gateway and temporary tunnel.
+
+Create a browser account for each player, then share its prefixed `np_` name,
+password, and the copied `wss://` address privately. Players first set their
+Eaglercraft profile username to that full `np_` name, enter the address in the
+multiplayer screen, and provide the password when prompted. Use a client that
+allows setting its profile name. Browser accounts use
+separate stable UUIDs and progress. Owners can reset passwords and revoke access
+in this tab. Ordinary Java players continue using the server's existing public
+game address through the managed proxy.
+
+Cloudflare Quick Tunnels supply temporary public addresses without requiring an
+account or port forwarding. The address changes when the tunnel restarts.
+Cloudflare describes this as a testing and development service with no uptime
+guarantee. NodePilot shows the current address and gateway logs in Browser Players.
+See [Cloudflare's Quick Tunnel documentation](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
+
+With **Auto-Wake** enabled in server settings, the browser gateway can start a
+sleeping Minecraft server independently of Playit. Players may need to retry
+joining after the starting-server notice. Stop Minecraft before choosing
+**Disable** to restore the configuration owned by the gateway. External edits
+that conflict with that configuration require review before restoration.
+
 ## Configuration and data
 
 When running for the first time, NodePilot offers an interactive setup wizard in your terminal to choose whether you want to run locally on your PC or make NodePilot accessible to other devices on your local Wi-Fi / LAN network. You can run or re-run this anytime with:

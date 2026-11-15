@@ -347,7 +347,7 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
   const tunnel = details?.runtime.tunnel;
   const playit = details?.runtime.playit;
 
-  const defaultWakePort = server.port ? (server.port >= 55535 ? server.port - 10000 : server.port + 10000) : 35565;
+  const defaultWakePort = wakeProxy?.wakePort ?? (server.port ? (server.port >= 55535 ? server.port - 10000 : server.port + 10000) : 35565);
 
   return (
     <section className="management-panel panel server-settings-container">
@@ -491,7 +491,7 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                 <Icon name="wifi" size={20} />
                 <div>
                   <h3>Auto-Wake on Connection</h3>
-                  <p>Wake up your server automatically when players connect via your Playit.gg tunnel.</p>
+                  <p>Wake up your server automatically when players join through a configured game connection.</p>
                 </div>
               </div>
               <div className="section-header-action">
@@ -524,9 +524,9 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                 <div className="setting-info">
                   <strong>Enable Auto-Wake Proxy</strong>
                   <p>
-                    When enabled, NodePilot runs a lightweight TCP Wake Proxy on this server&apos;s wake port while the
-                    Minecraft server is stopped. When a player attempts to join via your Playit.gg tunnel, the proxy
-                    detects the connection and initiates an automatic server launch.
+                    When enabled, NodePilot keeps a lightweight wake listener available while Minecraft is stopped.
+                    A player joining through a configured Playit tunnel or an enabled Browser Players gateway
+                    triggers the server to start. Browser Players can wake the server independently of Playit.
                   </p>
                 </div>
                 <div className="setting-action">
@@ -562,8 +562,8 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
 
               {/* Infrastructure Readiness & Diagnostics Box */}
               <div className="setting-detail-box">
-                <strong>Playit.gg Tunnel & Infrastructure Status</strong>
-                <p>Auto-Wake routes incoming traffic through your local Playit agent to trigger wakeups:</p>
+                <strong>Playit.gg connection status</strong>
+                <p>This connection method uses a local Playit agent and a tunnel targeting the wake listener. The Browser Players tab provides a separate connection method and its own public address.</p>
 
                 <div className="settings-status-grid">
                   <div className="status-grid-item">
@@ -633,7 +633,7 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                   </div>
                   <div className="port-card">
                     <span className="port-badge-label">Actual Minecraft Port</span>
-                    <strong>{server.port ?? 25565}</strong>
+                    <strong>{wakeProxy?.minecraftPort ?? server.port ?? 25565}</strong>
                     <small>The local server port bound when the Minecraft server is running.</small>
                   </div>
                 </div>
@@ -651,7 +651,7 @@ export function ServerSettingsPanel({ server, onServerUpdated, onNavigateToTab }
                       onChange={(e) => setWakeProxyPort(e.target.value)}
                     />
                   </label>
-                  <small>Leave empty to use standard offset port ({defaultWakePort}).</small>
+                  <small>Leave empty to use the managed or default wake port ({defaultWakePort}). Disable Browser Players before changing its managed ports.</small>
                 </div>
               </div>
 

@@ -1,4 +1,5 @@
 import net from 'node:net';
+import type { GameConnectionResolver } from '../lib/game-connections.js';
 import type { ServerRecord } from '../types.js';
 import type { ServerRepository } from '../repositories/server-repository.js';
 import type { ServerSettingsRepository } from '../repositories/server-settings-repository.js';
@@ -42,7 +43,13 @@ interface PendingClient {
   cleanup: () => void;
 }
 
-interface WakeProxyOptions { playerWaitMs?: number; startupTimeoutMs?: number; inspectionTimeoutMs?: number }
+interface WakeProxyOptions {
+  playerWaitMs?: number;
+  startupTimeoutMs?: number;
+  inspectionTimeoutMs?: number;
+  connections?: GameConnectionResolver;
+  browserEnabled?: (serverId: string) => boolean;
+}
 const MAX_WAITING_CLIENTS = 64;
 const MAX_BUFFERED_BYTES = 128 * 1024;
 
@@ -69,6 +76,15 @@ export class WakeProxyService {
     private readonly javaService?: JavaService,
     private readonly options: WakeProxyOptions = {},
   ) {}
+
+  private backendPort(server: ServerRecord): number {
+    return this.options.connections?.resolve(server).backendPort ?? server.port;
+  }
+
+  private browserWakePort(server: ServerRecord): number | null {
+    if (!this.options.browserEnabled?.(server.id)) return null;
+    return this.options.connections?.resolve(server).browserWakePort ?? null;
+  }
 
   start(intervalMs = 5_000): void {
     if (this.timer) return;
@@ -118,7 +134,7 @@ export class WakeProxyService {
   }
 
   private launchKey(server: ServerRecord): string {
-    return `${server.port}/${server.version}/${this.runtime.getProcessInfo?.(server.id)?.runtimeId ?? server.lastStartedAt ?? ''}`;
+    return `${this.backendPort(server)}/${server.version}/${this.runtime.getProcessInfo?.(server.id)?.runtimeId ?? server.lastStartedAt ?? ''}`;
   }
 
   private isReady(server: ServerRecord): boolean {
@@ -138,10 +154,11 @@ export class WakeProxyService {
   }
 
   private async probeBackend(server: ServerRecord, timeoutMs: number): Promise<ProbeResult> {
-    const probe = await probeMinecraftServer('127.0.0.1', server.port, timeoutMs);
+    const port = this.backendPort(server);
+    const probe = await probeMinecraftServer('127.0.0.1', port, timeoutMs);
     // enable-status=false is valid. A genuine Done line from this launch plus
     // an accepting local socket still establishes readiness without an SLP reply.
-    if (!probe.ready && !this.stopped && this.observedProgress(server).isReady && await this.checkTcpPort('127.0.0.1', server.port, timeoutMs)) return { ready: true };
+    if (!probe.ready && !this.stopped && this.observedProgress(server).isReady && await this.checkTcpPort('127.0.0.1', port, timeoutMs)) return { ready: true };
     return probe;
   }
 
@@ -171,11 +188,14 @@ export class WakeProxyService {
       }
     }
 
-    const minecraftPort = server?.port ?? 25565;
-    const defaultWakePort = minecraftPort >= 55535 ? minecraftPort - 10000 : minecraftPort + 10000;
-    const wakePort = settings?.wakeProxyPort ?? defaultWakePort;
+    const publicPort = server?.port ?? 25565;
+    const minecraftPort = server ? this.backendPort(server) : publicPort;
+    const browserWakePort = server ? this.browserWakePort(server) : null;
+    const browserEnabled = browserWakePort !== null;
+    const defaultWakePort = publicPort >= 55535 ? publicPort - 10000 : publicPort + 10000;
+    const wakePort = browserWakePort ?? settings?.wakeProxyPort ?? defaultWakePort;
     const publicAddress = tunnel?.publicAddress ?? null;
-    const enabled = settings?.autoWake ?? false;
+    const enabled = browserEnabled || (settings?.autoWake ?? false);
     const starting = Boolean(server && this.isStarting(server));
     const startup = starting && server ? this.progress(server) : undefined;
 
@@ -200,7 +220,7 @@ export class WakeProxyService {
       };
     }
 
-    if (!playitInstalled || !playit.secretExists) {
+    if (!browserEnabled && (!playitInstalled || !playit.secretExists)) {
       return {
         status: 'unsupported',
         wakePort,
@@ -218,7 +238,7 @@ export class WakeProxyService {
         message: 'This TCP Auto-Wake proxy supports Minecraft Java. Bedrock uses UDP and cannot use Java startup notices.' };
     }
 
-    if (!tunnelConfigured) {
+    if (!browserEnabled && !tunnelConfigured) {
       return {
         status: 'unsupported',
         wakePort,
@@ -250,8 +270,10 @@ export class WakeProxyService {
         message = 'Server is starting. Players receive a startup notice after a short wait; refreshing the Minecraft server list shows the latest reported progress.';
       } else if (server.status === 'running') {
         message = `Listening on wake port ${wakePort}. Reverse-proxying active traffic to Minecraft port ${minecraftPort}.`;
-      } else {
+      } else if (settings?.autoWake) {
         message = `Listening on wake port ${wakePort}. Incoming connection will start "${server.name}".`;
+      } else {
+        message = 'The browser gateway is available. This server is stopped and Auto-Wake is disabled; start the server from NodePilot.';
       }
     }
 
@@ -281,17 +303,16 @@ export class WakeProxyService {
       if (this.stopped || generation !== this.generation) return;
       if (!['starting', 'running'].includes(server.status)) this.readyServers.delete(server.id);
       const settings = this.settingsRepo.find(server.id);
+      const browserWakePort = this.browserWakePort(server);
       const shouldBeListening =
         server.software !== 'bedrock' && server.game !== 'minecraft-bedrock' &&
-        Boolean(settings?.autoWake) &&
-        playit.installed &&
-        playit.secretExists;
+        (browserWakePort !== null || Boolean(settings?.autoWake) && playit.installed && playit.secretExists);
 
       const currentlyListening = this.listeners.has(server.id);
       const currentPort = this.listenerPorts.get(server.id);
 
       const defaultWakePort = server.port >= 55535 ? server.port - 10000 : server.port + 10000;
-      const desiredPort = settings?.wakeProxyPort ?? defaultWakePort;
+      const desiredPort = browserWakePort ?? settings?.wakeProxyPort ?? defaultWakePort;
 
       if (shouldBeListening) {
         if (!currentlyListening) {
@@ -336,10 +357,20 @@ export class WakeProxyService {
       });
 
       try {
-        listener.listen(port, '0.0.0.0', () => {
+        const host = this.browserWakePort(server) !== null ? '127.0.0.1' : '0.0.0.0';
+        listener.listen(port, host, () => {
           if (this.stopped || generation !== this.generation) { listener.close(); resolve(); return; }
-          if (!this.settingsRepo.find(serverId)?.autoWake) { listener.close(); resolve(); return; }
-          console.log(`[Wake Proxy] [Server: ${server.name}] Listening on wake port ${port} (Minecraft port: ${server.port})`);
+          const current = this.serverRepo.find(serverId);
+          const browserPort = current ? this.browserWakePort(current) : null;
+          const settings = this.settingsRepo.find(serverId);
+          const currentPublicPort = current?.port ?? server.port;
+          const defaultWakePort = currentPublicPort >= 55535 ? currentPublicPort - 10000 : currentPublicPort + 10000;
+          const expectedPort = browserPort ?? settings?.wakeProxyPort ?? defaultWakePort;
+          const expectedHost = browserPort !== null ? '127.0.0.1' : '0.0.0.0';
+          if (!current || !settings?.autoWake && browserPort === null || expectedPort !== port || expectedHost !== host) {
+            listener.close(); resolve(); return;
+          }
+          console.log(`[Wake Proxy] [Server: ${server.name}] Listening on wake port ${port} (Minecraft port: ${this.backendPort(server)})`);
           this.listeners.set(serverId, listener);
           this.listenerPorts.set(serverId, port);
           resolve();
@@ -495,7 +526,8 @@ export class WakeProxyService {
       packet ??= createStatusResponsePacket({
         motdText: `§6[NodePilot] §f${server.name}\n` + (starting
           ? `§eStarting server… §f${progress.stage}${progress.percent === null ? '' : ` — ${progress.percent}% (stage)`}`
-          : ready ? '§aServer is ready. Join now!' : '§7Server is sleeping. §aConnect to wake it up!'),
+          : ready ? '§aServer is ready. Join now!' : this.settingsRepo.find(server.id)?.autoWake
+            ? '§7Server is sleeping. §aConnect to wake it up!' : '§7Server is stopped. Ask the owner to start it.'),
         protocolVersion: handshake.protocolVersion, versionName: starting ? 'NodePilot Auto-Wake [Starting]' : ready ? 'NodePilot Auto-Wake [Ready]' : 'NodePilot Auto-Wake [Sleeping]', maxPlayers: 0, onlinePlayers: 0, hidePlayerCounts: ready,
       });
       socket.write(packet); responded = true; finishPing();
@@ -526,6 +558,12 @@ export class WakeProxyService {
     initialBuffers: Buffer[],
     remoteAddr: string,
   ): void {
+    const current = this.serverRepo.find(server.id) ?? server;
+    if (!this.settingsRepo.find(server.id)?.autoWake && !['running', 'starting'].includes(current.status)
+      && !this.runtime.isProcessActive?.(server.id)) {
+      this.sendDisconnectAndClose(socket, '§e[NodePilot]\n\nThis server is stopped and Auto-Wake is disabled.\nAsk the owner to start it from NodePilot.');
+      return;
+    }
     if (this.enqueuePendingClient(server, socket, initialBuffers, remoteAddr)) void this.ensureServerStarting(server);
   }
 
@@ -605,7 +643,6 @@ export class WakeProxyService {
           }
         }
         if (this.stopped || generation !== this.generation) return false;
-        if (!this.settingsRepo.find(server.id)?.autoWake) return false;
         const current = this.serverRepo.find(server.id);
         // Java discovery can overlap a stopped-server version change. Never
         // launch the newly installed runtime with Java chosen for the old one.
@@ -615,32 +652,37 @@ export class WakeProxyService {
           throw new Error('The server version or Java configuration changed while waking it. Join again to retry.');
         }
         if (['offline', 'error'].includes(current.status) && !this.runtime.isProcessActive?.(current.id)) {
+          if (!this.settingsRepo.find(server.id)?.autoWake) {
+            this.flushPendingClients(server.id, this.backendPort(current), false, 'Auto-Wake is disabled. Ask the owner to start the server.');
+            return false;
+          }
           await this.runtime.start(current, javaPath, warning);
-          console.log(`[Wake Proxy] [Server: ${server.name}] Server process launched. Probing backend readiness on port ${current.port}...`);
+          console.log(`[Wake Proxy] [Server: ${server.name}] Server process launched. Probing backend readiness on port ${this.backendPort(current)}...`);
         }
         if (this.stopped || generation !== this.generation) return false;
-        const ready = await this.waitForBackendReady(server.id, server.port, this.options.startupTimeoutMs ?? 180_000, generation);
+        const backendPort = this.backendPort(current);
+        const ready = await this.waitForBackendReady(server.id, backendPort, this.options.startupTimeoutMs ?? 180_000, generation);
         if (this.stopped || generation !== this.generation) return false;
         if (ready) {
           const current = this.serverRepo.find(server.id);
           if (!current) return false;
           this.readyServers.set(server.id, this.launchKey(current));
-          console.log(`[Wake Proxy] [Server: ${server.name}] Backend ready on port ${server.port}. Forwarding queued connections...`);
-          this.flushPendingClients(server.id, server.port, true);
+          console.log(`[Wake Proxy] [Server: ${server.name}] Backend ready on port ${backendPort}. Forwarding queued connections...`);
+          this.flushPendingClients(server.id, backendPort, true);
           return true;
         } else {
           const statusCheck = this.serverRepo.find(server.id);
           const reason = !statusCheck || !['starting', 'running'].includes(statusCheck.status)
             ? 'Server process exited unexpectedly during boot' : undefined;
           console.warn(`[Wake Proxy] [Server: ${server.name}] ${reason ?? 'Readiness is not confirmed yet; the server continues starting. Check its console.'}`);
-          this.flushPendingClients(server.id, server.port, false, reason);
+          this.flushPendingClients(server.id, backendPort, false, reason);
           return false;
         }
       } catch (err) {
         if (this.stopped || generation !== this.generation) return false;
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[Wake Proxy] [Server: ${server.name}] Error during Auto-Wake startup:`, errMsg);
-        this.flushPendingClients(server.id, server.port, false, errMsg);
+        this.flushPendingClients(server.id, this.backendPort(server), false, errMsg);
         return false;
       } finally {
         if (this.wakePromises.get(server.id) === wakePromise) this.wakePromises.delete(server.id);
@@ -765,12 +807,13 @@ export class WakeProxyService {
     if (clientSocket.destroyed) return;
     clientSocket.pause();
 
-    const backendSocket = net.connect({ host: '127.0.0.1', port: server.port });
+    const port = this.backendPort(server);
+    const backendSocket = net.connect({ host: '127.0.0.1', port });
     backendSocket.setNoDelay(true);
 
     backendSocket.once('connect', () => {
       if (clientSocket.destroyed) { backendSocket.destroy(); return; }
-      console.log(`[Wake Proxy] [Server: ${server.name}] Connection from ${remoteAddr} forwarded to backend on 127.0.0.1:${server.port}.`);
+      console.log(`[Wake Proxy] [Server: ${server.name}] Connection from ${remoteAddr} forwarded to backend on 127.0.0.1:${port}.`);
       for (const chunk of initialBuffers) {
         backendSocket.write(chunk);
       }

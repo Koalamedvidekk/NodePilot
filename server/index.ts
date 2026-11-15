@@ -47,6 +47,8 @@ import { AutoStartService } from './services/auto-start-service.js';
 import { ServerTunnelService } from './services/server-tunnel-service.js';
 import { AutoSleepService } from './services/auto-sleep-service.js';
 import { WakeProxyService } from './services/wake-proxy-service.js';
+import { BrowserAccessService } from './services/browser-access-service.js';
+import { registerBrowserAccessRoutes } from './routes/browser-access-routes.js';
 import { UpdateService } from './services/update-service.js';
 import { ServerVersionService } from './services/server-version-service.js';
 import { parseMemoryMb, validateCustomJvmArgs } from './lib/settings-helpers.js';
@@ -367,20 +369,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const serverMutationCounts = new Map<string, number>();
   let worlds: WorldService;
   let addons: AddonService;
+  let browserAccess: BrowserAccessService;
   const versionSettings = new ServerVersionRepository(database);
   const serverVersions = new ServerVersionService(
     { serversDirectory: config.serversDirectory, backupsDirectory: config.backupsDirectory },
     repository, minecraft, java,
     {
-      isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasPending(id)) || Boolean(addons?.hasRecoveryBlock(id)),
-      versionChangeBlockedReason: (id) => addons?.hasPending(id) || addons?.hasRecoveryBlock(id)
-        ? 'Minecraft version changes are paused until queued add-ons have been applied by a server start, or cancelled in Plugins or Mods.' : null,
+      isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(browserAccess?.ports(id)) || Boolean(browserAccess?.isBusy(id)) || Boolean(browserAccess?.hasRecoveryBlock(id)) || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasPending(id)) || Boolean(addons?.hasRecoveryBlock(id)),
+      versionChangeBlockedReason: (id) => browserAccess?.ports(id)
+        ? 'Disable Browser Players before changing Minecraft versions so the browser gateway compatibility can be checked again.'
+        : addons?.hasPending(id) || addons?.hasRecoveryBlock(id)
+          ? 'Minecraft version changes are paused until queued add-ons have been applied by a server start, or cancelled in Plugins or Mods.' : null,
     },
     versionSettings,
     () => updates.isMaintenanceActive(),
   );
   worlds = new WorldService(config, repository, new WorldRepository(database), {
-    isProcessActive: (id) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || serverVersions.isBusy(id) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasRecoveryBlock(id)),
+    isProcessActive: (id) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(browserAccess?.isBusy(id)) || Boolean(browserAccess?.hasRecoveryBlock(id)) || serverVersions.isBusy(id) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasRecoveryBlock(id)),
   }, () => updates.isMaintenanceActive());
   await worlds.recover();
   addons = new AddonService(config.serversDirectory, config.backupsDirectory, database, {
@@ -388,6 +393,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     getServer: (id) => repository.require(id),
     isProcessActive: (id) => runtime.hasProcess(id),
     assertCanMutate: (id) => {
+      browserAccess?.assertCanChange(id);
       if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
       worlds.assertCanStart(id);
       if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'Wait for this server to finish changing Minecraft versions.');
@@ -399,14 +405,29 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
   });
   await addons.recover();
+  browserAccess = new BrowserAccessService(database, repository, java, {
+    dataDirectory: config.dataDirectory, serversDirectory: config.serversDirectory,
+    isProcessActive: (id) => runtime.isProcessActive(id),
+    assertMaintenance: (id) => {
+      if (updates.isMaintenanceActive() || worlds.isBusy(id) || serverVersions.isBusy(id) || addons.isBusy(id) || addons.hasPending(id) || (serverMutationCounts.get(id) ?? 0) > 0) throw new AppError(409, 'server_maintenance_in_progress', 'Finish the current server operation before changing Browser Players.');
+      worlds.assertCanStart(id);
+      if (addons.hasRecoveryBlock(id)) throw new AppError(409, 'addon_recovery_required', 'Recover the interrupted add-on change first.');
+    },
+    wakePort: (server) => {
+      const settings = settingsRepository.find(server.id);
+      return settings?.autoWake ? settings.wakeProxyPort ?? (server.port >= 55535 ? server.port - 10000 : server.port + 10000) : null;
+    },
+  });
+  await browserAccess.recover();
   runtime.setStartGuard((id) => {
+    browserAccess.assertCanStart(id);
     if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
     if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
     worlds.assertCanStart(id);
     if (addons.isBusy(id)) throw new AppError(409, 'addon_change_in_progress', 'Wait for the current add-on change to finish before starting the server.');
     if (addons.hasRecoveryBlock(id)) throw new AppError(409, 'addon_recovery_required', 'An interrupted add-on change needs recovery before this server can start. Check its Plugins or Mods tab.');
   });
-  runtime.setStartValidation((id) => worlds.validateStart(id));
+  runtime.setStartValidation(async (id) => { await worlds.validateStart(id); await browserAccess.validateStart(id); });
   runtime.setBeforeLaunch((id) => addons.applyPending(repository.require(id)));
   const autoStart = new AutoStartService(repository, runtime, playit, java);
   const metrics = new ProcessMetricsService(runtime, config.serversDirectory);
@@ -416,7 +437,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const players = new PlayerService(config.serversDirectory, runtime, bridge);
   const autoSleep = new AutoSleepService(repository, settingsRepository, runtime, players);
   autoSleep.start();
-  const wakeProxy = new WakeProxyService(repository, settingsRepository, serverTunnelRepo, playit, runtime, java);
+  const wakeProxy = new WakeProxyService(repository, settingsRepository, serverTunnelRepo, playit, runtime, java, {
+    connections: browserAccess.connections, browserEnabled: (id) => browserAccess.isEnabled(id),
+  });
   wakeProxy.start();
   const system = new SystemService(repository, config.dataDirectory);
   const app = Fastify({ logger: { level: process.env.NODEPILOT_LOG_LEVEL ?? 'info' }, bodyLimit: 1_100_000 });
@@ -428,6 +451,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const match = request.url.split('?')[0].match(/^\/api\/servers\/([0-9a-f-]{36})(\/.*)?$/i);
     if (!match) return;
     const id = match[1];
+    if (match[2]?.startsWith('/browser-access')) return;
+    browserAccess.assertCanStart(id);
+    if (browserAccess.ports(id) && !['/start', '/stop', '/restart', '/command'].includes(match[2] ?? '')) {
+      const protectedChange = match[2]?.startsWith('/files') || match[2]?.startsWith('/addons') || match[2]?.startsWith('/versions') || ['/properties', ''].includes(match[2] ?? '');
+      if (protectedChange) browserAccess.assertCanChange(id);
+    }
     if (match[2]?.startsWith('/worlds')) return;
     if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
     worlds.assertCanStart(id);
@@ -468,6 +497,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.addHook('preHandler', async (request) => {
+    if (/^\/api\/servers\/[^/]+\/browser-access(?:\/|\?|$)/.test(request.url) && !isAllowedAppOrigin(request.headers.origin)) throw new AppError(403, 'untrusted_origin', 'Browser Players requests must originate from the NodePilot panel.');
     if (!config.pin) return;
     if (!requiresPanelPin(request.url)) return;
 
@@ -493,6 +523,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.get('/api/health', async () => ({ ok: true, timestamp: new Date().toISOString(), version: updates.getStatus().currentVersion }));
   await registerWorldRoutes(app, worlds, { dataDirectory: config.dataDirectory });
+  await registerBrowserAccessRoutes(app, browserAccess, () => wakeProxy.reconcileAll());
   app.get('/api/system', async () => system.summary());
   app.get('/api/dashboard', async () => ({
     servers: await Promise.all(repository.list().map((server) => serializeServerWithDiskCheck(server, config.serversDirectory))),
@@ -652,6 +683,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
     const isBedrock = software === 'bedrock';
     const port = await chooseGamePort(repository, input.port, isBedrock);
+    browserAccess.assertPortNotReserved(port);
     const id = crypto.randomUUID();
     const directory = `${input.name
       .normalize('NFKD')
@@ -707,6 +739,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
     if (input.port !== undefined && input.port !== current.port) {
+      browserAccess.assertPortNotReserved(input.port);
       if (repository.portIsAssigned(input.port, id)) throw new AppError(409, 'port_assigned', `Port ${input.port} is assigned to another managed server.`);
       await assertPortAvailable(input.port);
     }
@@ -724,6 +757,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.delete('/api/servers/:id', async (request, reply) => {
     const { id } = serverParamsSchema.parse(request.params);
+    browserAccess.assertCanChange(id);
+    await browserAccess.stopOwned(id);
     const server = requireServer(repository, id);
     if (['starting', 'running', 'stopping'].includes(server.status)) {
       if (runtime.isProcessActive(server.id)) {
@@ -1098,6 +1133,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/updates/install', async (_request, reply) => {
+    if (browserAccess.anyBusy()) throw new AppError(409, 'browser_operation_in_progress', 'Wait for Browser Players setup to finish before updating NodePilot.');
     if (addons.anyBusy()) throw new AppError(409, 'addon_change_in_progress', 'Wait for add-on changes to finish before updating NodePilot.');
     if (worlds.anyBusy()) throw new AppError(409, 'world_operation_in_progress', 'Wait for world operations to finish before updating NodePilot.');
     if (serverVersions.anyBusy()) throw new AppError(409, 'minecraft_update_in_progress', 'Wait for Minecraft version changes to finish before updating NodePilot.');
@@ -1372,12 +1408,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     let server = requireServer(repository, id);
     const currentSettings = settingsRepository.getOrCreate(id);
     const input = updateServerSettingsSchema.parse(request.body);
+    if (browserAccess.ports(id) && ((input.port !== undefined && input.port !== server.port) || (input.wakeProxyPort !== undefined && input.wakeProxyPort !== currentSettings.wakeProxyPort))) browserAccess.assertCanChange(id);
 
     const isServerActive = ['starting', 'running', 'stopping'].includes(server.status);
     let restartRequired = false;
 
     // 1. Port validation
     if (input.port !== undefined && input.port !== server.port) {
+      browserAccess.assertPortNotReserved(input.port);
       if (isServerActive) {
         throw new AppError(409, 'server_active', 'Stop the server before changing its port.');
       }
@@ -1390,6 +1428,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // 2. Wake Proxy Port validation
     const targetServerPort = input.port ?? server.port;
     if (input.wakeProxyPort !== undefined && input.wakeProxyPort !== null) {
+      browserAccess.assertPortNotReserved(input.wakeProxyPort);
       if (input.wakeProxyPort === targetServerPort) {
         throw new AppError(400, 'wake_port_conflict', `Wake proxy port (${input.wakeProxyPort}) cannot be identical to the Minecraft server port.`);
       }
@@ -1474,7 +1513,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       shutdownTimeoutSeconds: input.shutdownTimeoutSeconds,
     });
 
-    void wakeProxy.reconcileAll();
+    await wakeProxy.reconcileAll();
+    await browserAccess.refreshRouting(id);
 
     const wakeProxyStatus = await wakeProxy.getStatus(id);
     const autoSleepStatus = autoSleep.getStatus(id);
@@ -1631,6 +1671,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.decorate('autoStart', autoStart);
   app.addHook('onListen', async () => {
     if (options.isPrimaryInstance) serverVersions.start();
+    await browserAccess.resume();
   });
   app.addHook('onListen', async () => {
     if (!hostSettings.getSettings().torEnabled) return;
@@ -1650,6 +1691,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
   app.addHook('onClose', async () => {
+    await browserAccess.stop();
     updates.stop();
     autoSleep.stop();
     wakeProxy.stop();

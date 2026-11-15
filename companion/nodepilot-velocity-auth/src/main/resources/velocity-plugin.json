@@ -1,0 +1,9 @@
+{
+  "id": "nodepilot-browser-auth",
+  "name": "NodePilot Browser Authentication",
+  "version": "0.1.0",
+  "description": "Authenticates Eaglercraft players against the local NodePilot account store.",
+  "authors": ["NodePilot contributors"],
+  "dependencies": [{"id": "eaglerxserver", "optional": false}],
+  "main": "dev.nodepilot.browser.BrowserAuth"
+}
