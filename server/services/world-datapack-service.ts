@@ -37,6 +37,9 @@ function maximumFormat(value: unknown): Format | null {
 
 function compare(left: Format, right: Format): number { return left[0] - right[0] || left[1] - right[1]; }
 function canonical(value: string): string { return value.normalize('NFC').toLowerCase(); }
+function softwareManagedPack(server: ServerRecord, id: string): boolean {
+  return id === 'file/bukkit' && ['paper', 'purpur', 'spigot'].includes(server.software);
+}
 function generationFile(filename: string): boolean { return /(?:^|\/)data\/[^/]+\/(?:dimension(?:_type)?|worldgen)(?:\/|$)/i.test(filename); }
 function description(value: unknown): string {
   if (typeof value === 'string') return value.slice(0, 2_000);
@@ -194,16 +197,18 @@ export class WorldDatapackService {
   private async runtimeFormat(server: ServerRecord, root: string): Promise<Format | null> { return (await this.runtimeInfo(server, root)).format; }
 
   private async describe(server: ServerRecord, root: string, location: PackLocation, metadata: WorldMetadata, runtime: Format | null): Promise<WorldDatapack> {
+    const managed = softwareManagedPack(server, location.id);
     let pack: PackInfo;
     try { pack = location.directory ? await this.unpackedInfo(root, location) : await this.zipInfo(await safeWorldPath(root, location.relative)); }
     catch (error) {
-      return { id: location.id, name: location.name, description: '', enabled: metadata.enabledPacks.includes(location.id), compatible: false, managed: false, generationPack: true, reason: error instanceof Error ? error.message : 'The datapack could not be inspected.', removable: false };
+      return { id: location.id, name: location.name, description: '', enabled: metadata.enabledPacks.includes(location.id), compatible: false, managed, generationPack: true, reason: error instanceof Error ? error.message : 'The datapack could not be inspected.', removable: false };
     }
     const compatible = runtime ? compare(runtime, pack.minimum!) >= 0 && compare(runtime, pack.maximum!) <= 0 : null;
-    const reason = compatible === null ? 'The installed Minecraft runtime does not expose a verifiable datapack format. Compatibility could not be confirmed.'
+    const reason = managed ? 'Provided by the server software for plugin resources; its files and selection are managed by Bukkit.'
+      : compatible === null ? 'The installed Minecraft runtime does not expose a verifiable datapack format. Compatibility could not be confirmed.'
       : !compatible ? 'This datapack does not declare support for the installed Minecraft data format.'
       : pack.generation && metadata.generated ? 'World-generation, dimension and experimental packs cannot be changed after this world has been generated.' : null;
-    return { id: location.id, name: location.name.replace(/\.zip$/i, ''), description: pack.description, enabled: metadata.enabledPacks.includes(location.id), compatible, managed: false, generationPack: pack.generation, reason, removable: !(pack.generation && metadata.generated) };
+    return { id: location.id, name: location.name.replace(/\.zip$/i, ''), description: pack.description, enabled: metadata.enabledPacks.includes(location.id), compatible, managed, generationPack: managed || pack.generation, reason, removable: !managed && !(pack.generation && metadata.generated) };
   }
 
   async list(server: ServerRecord, group: WorldGroup, metadata: WorldMetadata): Promise<WorldDatapack[]> {
@@ -220,7 +225,7 @@ export class WorldDatapackService {
     for (const location of locations) packs.push(await this.describe(server, root, location, metadata, runtime));
     for (const id of new Set([...metadata.enabledPacks, ...metadata.disabledPacks])) {
       if (packs.some((pack) => pack.id === id)) continue;
-      packs.push({ id, name: id, description: '', enabled: metadata.enabledPacks.includes(id), compatible: null, managed: !id.startsWith('file/'), generationPack: true,
+      packs.push({ id, name: id, description: '', enabled: metadata.enabledPacks.includes(id), compatible: null, managed: !id.startsWith('file/') || softwareManagedPack(server, id), generationPack: true,
         reason: id.startsWith('file/') ? 'This referenced datapack file is missing.' : 'Provided by the server software or an experimental feature; its selection is preserved.', removable: false });
     }
     return packs;

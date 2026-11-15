@@ -1068,7 +1068,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const input = networkUpdateSchema.parse(request.body);
     const pin = input.pin !== undefined ? input.pin : undefined;
     if ((await tor.getStatus()).isRunning && pin !== undefined && !pin?.trim()) {
-      throw new AppError(409, 'tor_pin_required', 'Set an access PIN before removing it while private remote access is enabled.');
+      throw new AppError(409, 'tor_pin_required', 'Disable private remote access before removing the panel PIN.');
     }
     await updateEnvFile({
       NODEPILOT_HOST: input.host,

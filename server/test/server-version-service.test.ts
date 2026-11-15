@@ -135,6 +135,23 @@ test('manual version change backs up everything and preserves worlds, settings a
   assert.equal(JSON.parse(await readFile(backup + '.json', 'utf8')).version, '1.21.4');
 });
 
+test('Paper runtime caches and plugin data do not block automatic upgrades, but loaded and pending add-ons do', async (t) => {
+  const f = await fixture(t);
+  for (const folder of ['plugins/.paper-remapped/remap-classpath', 'plugins/ExamplePlugin/lib', 'mods/.cache']) {
+    await mkdir(path.join(f.directory, folder), { recursive: true });
+    await writeFile(path.join(f.directory, folder, 'runtime.jar'), 'cached library');
+  }
+  assert.equal((await f.service.getStatus(f.server.id)).automaticUpdateBlockedReason, null);
+  for (const folder of ['plugins', 'mods', 'plugins/update']) {
+    await mkdir(path.join(f.directory, folder), { recursive: true });
+    const addon = path.join(f.directory, folder, 'example.JAR');
+    await writeFile(addon, 'loaded add-on');
+    assert.match((await f.service.getStatus(f.server.id)).automaticUpdateBlockedReason!, /plugins or mods/);
+    await rm(addon);
+  }
+  assert.equal((await f.service.getStatus(f.server.id)).automaticUpdateBlockedReason, null);
+});
+
 test('download failure leaves original files and version untouched and retains completed backup', async (t) => {
   const f = await fixture(t);
   f.setStage(async () => { throw new Error('Download checksum mismatch'); });

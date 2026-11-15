@@ -284,3 +284,27 @@ test('verified built-in experiments are selectable only before generation withou
   await packs.copySelection(server, group, prepared, ['vanilla', 'fabric', 'verified_experiment']);
   assert.deepEqual(await readdir(path.join(directory, 'prepared')), []);
 });
+
+test('Bukkit-generated datapacks are protected on plugin servers, including malformed metadata', async (t) => {
+  const { directory, server, group, packs } = await fixture(t);
+  await runtime(directory, server.version, false);
+  const packDirectory = path.join(directory, 'world/datapacks/bukkit');
+  await mkdir(packDirectory, { recursive: true });
+  await writeFile(path.join(packDirectory, 'pack.mcmeta'), JSON.stringify({ pack: { pack_format: 15, description: 'Data pack for resources provided by Bukkit plugins' } }));
+  const saved = await readWorldMetadata(directory, group);
+  const metadata = { ...saved, enabledPacks: [...saved.enabledPacks, 'file/bukkit'] };
+  for (const software of ['paper', 'purpur', 'spigot'] as const) {
+    const pluginServer = { ...server, software };
+    const pack = (await packs.list(pluginServer, group, metadata)).find((value) => value.id === 'file/bukkit')!;
+    assert.equal(pack.managed, true);
+    assert.equal(pack.removable, false);
+    await assert.rejects(packs.remove(pluginServer, group, pack.id), /software-managed datapacks cannot be removed/);
+    await assert.rejects(packs.validateSelection(pluginServer, group, metadata, saved.enabledPacks, [pack.id]), /Software-managed datapack selections/);
+  }
+  assert.equal((await packs.list({ ...server, software: 'vanilla' }, group, metadata)).find((value) => value.id === 'file/bukkit')?.managed, false);
+  await writeFile(path.join(packDirectory, 'pack.mcmeta'), 'invalid metadata');
+  const broken = (await packs.list(server, group, metadata)).find((value) => value.id === 'file/bukkit')!;
+  assert.equal(broken.managed, true);
+  assert.equal(broken.removable, false);
+  await assert.rejects(packs.remove(server, group, broken.id), /software-managed datapacks cannot be removed/);
+});

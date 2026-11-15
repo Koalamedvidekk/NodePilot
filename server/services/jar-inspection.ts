@@ -21,6 +21,7 @@ export type JarMetadata = {
   version?: string;
   apiVersion?: string;
   loader?: string;
+  environment?: 'client' | 'server' | '*';
   manifest?: Record<string, string>;
   entries: string[];
 };
@@ -131,6 +132,7 @@ export async function inspectJar(filePath: string): Promise<JarMetadata> {
     let version: string | undefined;
     let apiVersion: string | undefined;
     let loader: string | undefined;
+    let environment: JarMetadata['environment'];
 
     if (paperPluginYml || pluginYml) {
       const descriptor = paperPluginYml ?? pluginYml ?? '';
@@ -139,12 +141,14 @@ export async function inspectJar(filePath: string): Promise<JarMetadata> {
       version = valueFromYaml(descriptor, 'version');
       apiVersion = valueFromYaml(descriptor, 'api-version');
     } else if (fabricModJson || quiltModJson) {
-      const descriptor = fabricModJson ?? quiltModJson ?? '{}';
+      const descriptor = quiltModJson ?? fabricModJson ?? '{}';
       try {
-        const parsed = JSON.parse(descriptor) as { id?: string; name?: string; version?: string };
+        const parsed = JSON.parse(descriptor) as { id?: string; name?: string; version?: string; environment?: string; minecraft?: { environment?: string }; quilt_loader?: { id?: string; version?: string; metadata?: { name?: string } } };
         software = quiltModJson ? 'quilt' : 'fabric';
-        name = parsed.name ?? parsed.id;
-        version = parsed.version;
+        name = quiltModJson ? parsed.quilt_loader?.metadata?.name ?? parsed.quilt_loader?.id : parsed.name ?? parsed.id;
+        version = quiltModJson ? parsed.quilt_loader?.version : parsed.version;
+        const side = quiltModJson ? parsed.minecraft?.environment : parsed.environment;
+        environment = side === 'client' ? 'client' : side === 'server' || side === 'dedicated_server' ? 'server' : side === '*' || side === undefined ? '*' : undefined;
       } catch {
         software = quiltModJson ? 'quilt' : 'fabric';
       }
@@ -195,6 +199,7 @@ export async function inspectJar(filePath: string): Promise<JarMetadata> {
       version,
       apiVersion,
       loader,
+      environment,
       manifest,
       entries,
     };

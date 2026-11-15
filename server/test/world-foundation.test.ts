@@ -194,7 +194,7 @@ test('modern Vanilla and Paper read and update their actual separate metadata fi
   for (const software of ['vanilla', 'paper'] as const) {
     const folder = software + '-world';
     const base = software === 'paper' ? folder + '/dimensions/minecraft/overworld/data/minecraft' : folder + '/data/minecraft';
-    const level = { name: '', type: 'compound', value: { Data: nbt.comp({ LevelName: nbt.string(folder), Version: nbt.comp({ Name: nbt.string('26.3') }), DataVersion: nbt.int(5000), hardcore: nbt.byte(0), difficulty_settings: nbt.comp({ difficulty: nbt.string('normal'), locked: nbt.byte(0) }), DataPacks: nbt.comp({ Enabled: { type: 'list', value: { type: 'string', value: ['vanilla'] } }, Disabled: { type: 'list', value: { type: 'string', value: [] } } }) }) } } as nbt.NBT;
+    const level = { name: '', type: 'compound', value: { Data: nbt.comp({ LevelName: nbt.string(folder), Version: nbt.comp({ Name: nbt.string('26.3') }), DataVersion: nbt.int(5000), difficulty_settings: nbt.comp({ difficulty: nbt.string('normal'), hardcore: nbt.byte(0), locked: nbt.byte(0) }), DataPacks: nbt.comp({ Enabled: { type: 'list', value: { type: 'string', value: ['vanilla'] } }, Disabled: { type: 'list', value: { type: 'string', value: [] } } }) }) } } as nbt.NBT;
     await saveNbt(root, folder + '/level.dat', level);
     await saveNbt(root, base + '/world_gen_settings.dat', { name: '', type: 'compound', value: { DataVersion: nbt.int(5000), data: nbt.comp({ seed: { type: 'long', value: [2_147_483_647, -1] }, generate_structures: nbt.byte(1), 'custom:tag': nbt.string('keep') }) } } as nbt.NBT);
     await saveNbt(root, base + '/game_rules.dat', { name: '', type: 'compound', value: { DataVersion: nbt.int(5000), data: nbt.comp({ 'minecraft:keep_inventory': nbt.byte(0), 'minecraft:random_tick_speed': nbt.int(3), 'minecraft:fire_spread_radius_around_player': nbt.int(128), 'custom:rule': nbt.string('unknown') }) } } as nbt.NBT);
@@ -204,6 +204,7 @@ test('modern Vanilla and Paper read and update their actual separate metadata fi
     const before = await readWorldMetadata(root, group);
     assert.equal(before.seed, '9223372036854775807');
     assert.equal(before.difficulty, 'normal');
+    assert.equal(before.hardcore, false);
     assert.equal(before.minecraftVersion, '26.3');
     await patchWorldMetadata(root, group, { difficulty: 'easy', rules: { 'minecraft:keep_inventory': true, 'minecraft:random_tick_speed': 5, 'minecraft:fire_spread_radius_around_player': -1 }, enabledPacks: ['vanilla', 'file/test.zip'], disabledPacks: [] });
     const after = await readWorldMetadata(root, group);
@@ -212,6 +213,17 @@ test('modern Vanilla and Paper read and update their actual separate metadata fi
     assert.equal(after.gameRules.find((rule) => rule.id === 'minecraft:keep_inventory')?.value, true);
     assert.deepEqual(after.enabledPacks, ['vanilla', 'file/test.zip']);
     assert.equal(after.seed, before.seed);
+    await patchWorldMetadata(root, group, { hardcore: true });
+    const hardcore = await readWorldMetadata(root, group);
+    assert.equal(hardcore.hardcore, true);
+    assert.equal(hardcore.difficulty, 'hard');
+    const saved = nbt.simplify((await nbt.parse(await readFile(path.join(root, folder, 'level.dat')))).parsed) as { Data: { hardcore?: number; difficulty_settings: { hardcore: number; locked: number } } };
+    assert.equal(saved.Data.hardcore, undefined);
+    assert.equal(saved.Data.difficulty_settings.hardcore, 1);
+    assert.equal(saved.Data.difficulty_settings.locked, 0);
+    await assert.rejects(patchWorldMetadata(root, group, { difficulty: 'normal' }), /Hardcore worlds/);
+    await patchWorldMetadata(root, group, { hardcore: false, difficulty: 'normal' });
+    assert.equal((await readWorldMetadata(root, group)).hardcore, false);
   }
 });
 

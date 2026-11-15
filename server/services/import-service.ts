@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
@@ -20,6 +20,7 @@ const MAX_DIRECTORY_IMPORT_BYTES = 64 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 32 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_RATIO = 250;
 const MAX_PROPERTIES_BYTES = 512 * 1024;
+const MAX_INSPECTION_JAR_BYTES = 512 * 1024 * 1024;
 
 export type ImportSource =
   | { type: 'directory'; path: string }
@@ -258,16 +259,16 @@ function hasPath(files: SourceFile[], relativePath: string): boolean {
 function valuesUnder(files: SourceFile[], root: string): string[] {
   const prefix = `${root}/`;
   return files
-    .filter((file) => !file.directory && file.relativePath.toLowerCase().startsWith(prefix) && /\.jar$/i.test(file.relativePath))
+    .filter((file) => !file.directory && file.relativePath.toLowerCase().startsWith(prefix) && /\.jar$/i.test(file.relativePath)
+      && (!file.relativePath.slice(prefix.length).includes('/') || root === 'plugins' && /^update\/[^/]+$/i.test(file.relativePath.slice(prefix.length))))
     .map((file) => file.relativePath.slice(prefix.length));
 }
 
 function worldNames(files: SourceFile[]): string[] {
   const values = new Set<string>();
   for (const file of files) {
-    if (!file.directory || file.relativePath.includes('/')) continue;
-    const candidate = `${file.relativePath}/level.dat`;
-    if (hasPath(files, candidate)) values.add(file.relativePath);
+    const match = !file.directory && /^([^/]+)\/level\.dat$/i.exec(file.relativePath);
+    if (match) values.add(match[1]);
   }
   return [...values].sort();
 }
@@ -540,6 +541,22 @@ export class ImportService {
     return (await this.prepare({ type: 'archive', path: archivePath }, sourceLabel)).inspection;
   }
 
+  private async inspectArchiveJar(archivePath: string, files: ArchiveFile[]): Promise<Awaited<ReturnType<typeof inspectJar>> | undefined> {
+    const jar = primaryJar(files);
+    const entry = files.find((file) => file.relativePath === jar && !file.directory);
+    if (!entry || entry.size > MAX_INSPECTION_JAR_BYTES) return undefined;
+    const staging = path.resolve(this.dataDirectory, 'import-inspections');
+    await mkdir(staging, { recursive: true });
+    const temporary = await mkdtemp(path.join(staging, 'jar-'));
+    try {
+      await extractArchive(archivePath, temporary, [{ ...entry, relativePath: 'candidate.jar' }]);
+      return await inspectJar(path.join(temporary, 'candidate.jar')).catch(() => undefined);
+    } finally {
+      if (!isInside(staging, temporary) || path.dirname(temporary) !== staging) throw new Error('Import inspection staging escaped its directory.');
+      await rm(temporary, { recursive: true, force: true });
+    }
+  }
+
   async prepare(source: ImportSource, sourceLabel = source.path): Promise<PreparedImport> {
     if (source.type === 'directory') {
       const root = await this.sourceDirectory(source.path);
@@ -558,11 +575,12 @@ export class ImportService {
     const archiveFiles = await readArchiveEntries(source.path);
     const propertiesPath = archiveFiles.find((file) => file.relativePath.toLowerCase() === 'server.properties')?.archivePath;
     const eulaPath = archiveFiles.find((file) => file.relativePath.toLowerCase() === 'eula.txt')?.archivePath;
-    const [properties, eula] = await Promise.all([
+    const [properties, eula, metadata] = await Promise.all([
       propertiesPath ? readArchiveText(source.path, propertiesPath) : undefined,
       eulaPath ? readArchiveText(source.path, eulaPath) : undefined,
+      this.inspectArchiveJar(source.path, archiveFiles),
     ]);
-    const inspection = inspectionFromFiles('archive', sourceLabel, archiveFiles, { properties, eula });
+    const inspection = inspectionFromFiles('archive', sourceLabel, archiveFiles, { properties, eula, jarMetadata: metadata });
     return { inspection, root: source.path, archiveFiles };
   }
 

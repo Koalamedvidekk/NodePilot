@@ -388,7 +388,7 @@ export class PlayerService {
     let live: LivePlayer | undefined;
     if (listing.capabilities.bridge.connected) {
       try {
-        live = bridgePlayer(await this.bridge.request(server.id, 'players.get', { uuid: player.uuid, name: player.name }));
+        live = bridgePlayer(await this.bridge.request(server.id, 'players.get', { player: { uuid: player.uuid, name: player.name } }));
       } catch {
         // A player may have disconnected between list and detail requests. Offline data is still useful.
       }

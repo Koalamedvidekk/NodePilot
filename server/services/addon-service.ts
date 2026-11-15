@@ -26,7 +26,7 @@ export type AddonRecord = {
   projectId?: string;
   versionId?: string;
   installedAt?: string;
-  metadata?: Pick<JarMetadata, 'name' | 'version' | 'software' | 'apiVersion' | 'loader'>;
+  metadata?: Pick<JarMetadata, 'name' | 'version' | 'software' | 'apiVersion' | 'loader' | 'environment'>;
   compatible: boolean;
   compatibilityMessage?: string;
 };
@@ -75,6 +75,7 @@ type ModrinthSearchHit = {
   project_type?: string;
   all_project_types?: string[];
   categories?: string[];
+  server_side?: string;
 };
 
 type ModrinthDependency = { project_id?: string; version_id?: string; dependency_type?: string };
@@ -144,7 +145,7 @@ export function safeAddonFileName(value: string): string {
   return normalized;
 }
 
-export function addonCompatibility(type: AddonType, server: Pick<ServerRecord, 'software' | 'version'>, metadata: Pick<JarMetadata, 'software' | 'apiVersion' | 'loader'>): { compatible: boolean; message?: string } {
+export function addonCompatibility(type: AddonType, server: Pick<ServerRecord, 'software' | 'version'>, metadata: Pick<JarMetadata, 'software' | 'apiVersion' | 'loader' | 'environment'>): { compatible: boolean; message?: string } {
   const supportError = requiredSoftwareForType(type, server.software);
   if (supportError) return { compatible: false, message: supportError };
   if (type === 'plugin') {
@@ -154,6 +155,7 @@ export function addonCompatibility(type: AddonType, server: Pick<ServerRecord, '
     }
     return { compatible: true };
   }
+  if (metadata.environment === 'client') return { compatible: false, message: 'This is a client-only mod. Install it in the Minecraft client, not on a dedicated server.' };
   if (
     metadata.software !== server.software
     && !(server.software === 'quilt' && metadata.loader === 'fabric')
@@ -407,16 +409,19 @@ export class AddonService {
     }
     const loader = modrinthLoader(type, server);
     const projectType = type === 'plugin' ? 'plugin' : 'mod';
-    const facets = JSON.stringify([
+    const facetGroups = [
       [`all_project_types:${projectType}`],
       [`versions:${server.version}`],
       [`categories:${loader}`],
-    ]);
+    ];
+    if (type === 'mod') facetGroups.push(['server_side:required', 'server_side:optional', 'server_side:unknown']);
+    const facets = JSON.stringify(facetGroups);
     const queryString = new URLSearchParams({ query: normalizedQuery, facets, limit: '20', index: 'relevance' });
     const payload = await readJson<{ hits?: ModrinthSearchHit[] }>(`${MODRINTH_API}/search?${queryString}`, new Set(['api.modrinth.com']));
     return (payload.hits ?? []).map((hit) => {
       const types = hit.all_project_types ?? [hit.project_type ?? ''];
-      const compatible = types.includes(projectType) && (hit.versions ?? []).includes(server.version);
+      const clientOnly = type === 'mod' && hit.server_side === 'unsupported';
+      const compatible = !clientOnly && types.includes(projectType) && (hit.versions ?? []).includes(server.version);
       return {
         source: 'modrinth' as const,
         projectId: hit.project_id ?? '',
@@ -426,7 +431,7 @@ export class AddonService {
         iconUrl: hit.icon_url,
         versions: hit.versions ?? [],
         compatible,
-        compatibilityMessage: compatible ? undefined : `This project does not list ${server.version} as supported.`,
+        compatibilityMessage: clientOnly ? 'This project is client-only and does not support dedicated servers.' : compatible ? undefined : `This project does not list ${server.version} as supported.`,
         url: `https://modrinth.com/project/${encodeURIComponent(hit.project_id ?? '')}`,
       };
     }).filter((project) => Boolean(project.projectId));
@@ -434,6 +439,10 @@ export class AddonService {
 
   private async modrinthVersion(server: ServerRecord, type: AddonType, projectId: string): Promise<{ version: ModrinthVersion; file: ModrinthFile; missingDependencies: string[] }> {
     const identifier = projectIdentifier(projectId);
+    if (type === 'mod') {
+      const project = await readJson<{ server_side?: string }>(`${MODRINTH_API}/project/${encodeURIComponent(identifier)}`, new Set(['api.modrinth.com']));
+      if (project.server_side === 'unsupported') throw new AppError(422, 'addon_client_only', 'This Modrinth project is client-only and does not support dedicated servers.');
+    }
     const query = new URLSearchParams({ loaders: JSON.stringify([modrinthLoader(type, server)]), game_versions: JSON.stringify([server.version]), featured: 'true', include_changelog: 'false' });
     const versions = await readJson<ModrinthVersion[]>(`${MODRINTH_API}/project/${encodeURIComponent(identifier)}/version?${query}`, new Set(['api.modrinth.com']));
     const version = versions.find((candidate) => candidate.files?.some((file) => file.url && file.filename && /\.jar$/i.test(file.filename)));

@@ -101,12 +101,14 @@ async function copyTree(source: string, destination: string): Promise<void> {
 }
 
 async function hasAddons(root: string): Promise<boolean> {
-  for (const folder of ['plugins', 'mods']) {
+  // Paper stores its own server classpath JAR under plugins/.paper-remapped.
+  // Only loader entry points (including Bukkit's pending updates) are add-ons.
+  for (const folder of ['plugins', 'mods', 'plugins/update']) {
     const target = path.join(root, folder);
     const info = await lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
     if (!info) continue;
     if (!info.isDirectory() || info.isSymbolicLink()) return true;
-    if ((await checkedTree(target)).some((entry) => !entry.directory && entry.relative.toLowerCase().endsWith('.jar'))) return true;
+    if ((await readdir(target, { withFileTypes: true })).some((entry) => !entry.isDirectory() && entry.name.toLowerCase().endsWith('.jar'))) return true;
   }
   return false;
 }

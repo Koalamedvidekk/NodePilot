@@ -135,6 +135,10 @@ function difficulty(data: Compound): WorldDifficulty | null {
   const legacy = number(data.Difficulty);
   return legacy !== null && Number.isInteger(legacy) ? (['peaceful', 'easy', 'normal', 'hard'][legacy] as WorldDifficulty | undefined) ?? null : null;
 }
+function hardcoreSettings(data: Compound): Compound {
+  const modern = compound(data.difficulty_settings);
+  return modern?.hardcore ? modern : data;
+}
 function preset(data: Compound, generation: Compound): string | null {
   const old = string(data.generatorName);
   if (old) return old === 'default' || old === 'normal' ? 'minecraft:normal' : old.includes(':') ? old : 'minecraft:' + old;
@@ -164,7 +168,7 @@ export async function readWorldMetadata(root: string, group: WorldGroup): Promis
     result.minecraftVersion = string(version?.Name) ?? string(version?.name);
     result.dataVersion = number(data.DataVersion) ?? number((level.tree.value as Compound).DataVersion) ?? number(data.data_version);
     result.difficulty = difficulty(data);
-    result.hardcore = bool(data.hardcore);
+    result.hardcore = bool(hardcoreSettings(data).hardcore);
     result.features = strings(data.enabled_features);
     const packs = compound(data.DataPacks) ?? compound(data.data_packs);
     result.enabledPacks = strings(packs?.Enabled ?? packs?.enabled);
@@ -224,13 +228,13 @@ export async function patchWorldMetadata(root: string, group: WorldGroup, change
   const dirty = new Set<string>();
   if (changes.hardcore !== undefined) {
     if (typeof changes.hardcore !== 'boolean') throw new AppError(400, 'invalid_world_setting', 'Hardcore must be a boolean.');
-    setNumericBoolean(level.data, 'hardcore', changes.hardcore);
+    setNumericBoolean(hardcoreSettings(level.data), 'hardcore', changes.hardcore);
     if (changes.hardcore) setDifficulty(level.data, 'hard');
     dirty.add(group.metadataFile);
   }
   if (changes.difficulty !== undefined) {
     if (!['peaceful', 'easy', 'normal', 'hard'].includes(changes.difficulty)) throw new AppError(400, 'invalid_world_setting', 'Choose a valid Minecraft difficulty.');
-    if (bool(level.data.hardcore) === true && changes.difficulty !== 'hard') throw new AppError(422, 'hardcore_difficulty', 'Hardcore worlds require Hard difficulty.');
+    if (bool(hardcoreSettings(level.data).hardcore) === true && changes.difficulty !== 'hard') throw new AppError(422, 'hardcore_difficulty', 'Hardcore worlds require Hard difficulty.');
     setDifficulty(level.data, changes.difficulty);
     dirty.add(group.metadataFile);
   }

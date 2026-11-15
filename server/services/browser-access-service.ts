@@ -28,6 +28,7 @@ import {
   patchJavaProperties,
 } from "../lib/java-properties.js";
 import { resolveManagedServerRoot } from "../lib/paths.js";
+import { minecraftReleaseProtocol } from "../lib/minecraft-protocol-version.js";
 import { BrowserAccountRepository } from "../repositories/browser-account-repository.js";
 import type { ServerRepository } from "../repositories/server-repository.js";
 import type { ServerRecord } from "../types.js";
@@ -638,8 +639,14 @@ export class BrowserAccessService {
   ): Promise<void> {
     if (!record.installed) throw new Error("Browser dependencies are missing.");
     const root = record.installed.directory;
+    const protocol = minecraftReleaseProtocol(server.version);
+    if (protocol === null) throw new AppError(422, "browser_protocol_unknown", "This Minecraft version has no verified browser gateway protocol mapping.");
     const velocity = `config-version = "2.7"\nbind = "0.0.0.0:${server.port}"\nmotd = "NodePilot Browser Gateway"\nshow-max-players = 100\nonline-mode = true\nforce-key-authentication = false\nplayer-info-forwarding-mode = "bungeeguard"\nforwarding-secret-file = "forwarding.secret"\n[servers]\nnodepilot = "127.0.0.1:${record.wakePort}"\ntry = ["nodepilot"]\n[forced-hosts]\n[advanced]\nlogin-ratelimit = 1000\nread-timeout = 30000\n`;
     await writeConfiguration(root, "velocity.toml", velocity);
+    // Sleeping wake listeners echo the probing client's protocol. Auto-detection
+    // would cache that value and reject browser joins until a later live ping.
+    await writeConfiguration(root, "plugins/viaversion/config.yml",
+      `velocity-ping-interval: -1\nvelocity-ping-save: false\nvelocity-servers:\n  default: ${protocol}\n  nodepilot: ${protocol}\n`);
     await writeConfiguration(root, "forwarding.secret", record.forwardingToken);
     await writeConfiguration(
       root,

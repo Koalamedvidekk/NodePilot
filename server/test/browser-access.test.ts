@@ -298,6 +298,10 @@ test('approved browser setup isolates the backend and disabling restores owned s
   const prepared = await state.setup();
   assert.equal(prepared.configured, true);
   assert.equal(prepared.enabled, false);
+  const via = parse(await readFile(path.join(state.installed.directory, 'plugins/viaversion/config.yml'), 'utf8'));
+  assert.equal(via['velocity-ping-interval'], -1);
+  assert.equal(via['velocity-ping-save'], false);
+  assert.deepEqual(via['velocity-servers'], { default: 769, nodepilot: 769 });
   const propertiesPath = path.join(state.serverRoot, 'server.properties');
   const managedText = await readFile(propertiesPath, 'utf8');
   const properties = parseJavaProperties(managedText);

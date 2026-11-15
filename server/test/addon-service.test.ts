@@ -40,3 +40,14 @@ test('plugin and mod compatibility remains separated by server software', () => 
   );
   assert.equal(fabricMod.compatible, true);
 });
+
+test('client-only mods are unavailable on dedicated Fabric and Quilt servers', () => {
+  for (const software of ['fabric', 'quilt'] as const) {
+    const result = addonCompatibility('mod', { software, version: '1.21.4' }, { software, loader: software, environment: 'client' });
+    assert.equal(result.compatible, false);
+    assert.match(result.message!, /client-only/);
+    for (const environment of ['server', '*', undefined] as const) {
+      assert.equal(addonCompatibility('mod', { software, version: '1.21.4' }, { software, loader: software, environment }).compatible, true);
+    }
+  }
+});
