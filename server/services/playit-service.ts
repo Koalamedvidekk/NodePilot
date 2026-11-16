@@ -663,23 +663,35 @@ export class PlayitService {
     }
 
     const logPath = path.join(baseDir, 'playit.log');
-    const child = spawn(binaryPath, ['--secret_path', secretPath, '--stdout', '-l', logPath, 'start'], {
+    // Playit's console and file logging flags are mutually exclusive.
+    const child = spawn(binaryPath, ['--secret_path', secretPath, '-l', logPath, 'start'], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
     });
+    let launchError: Error | undefined;
+    let exitDescription = '';
     const release = () => {
       if (this.childProcess === child) this.childProcess = null;
     };
-    child.once('exit', release);
-    child.once('error', release);
+    child.once('exit', (code, signal) => {
+      exitDescription = code !== null ? ` (exit code ${code})` : signal ? ` (${signal})` : '';
+      release();
+    });
+    child.once('error', (error) => {
+      launchError = error;
+      release();
+    });
     child.unref();
     this.childProcess = child;
 
     // Surface immediate launch errors instead of reporting a stopped agent as a success.
     await new Promise((resolve) => setTimeout(resolve, 800));
-    if (this.childProcess === null) {
-      throw new Error('Playit stopped during startup. Check the Playit log in the NodePilot data directory.');
+    if (launchError) {
+      throw new Error(`Could not launch Playit: ${launchError.message}`);
+    }
+    if (this.childProcess !== child || !isLiveChild(child)) {
+      throw new Error(`Playit stopped during startup${exitDescription}. Check the Playit log in the NodePilot data directory.`);
     }
     return this.getStatus();
   }

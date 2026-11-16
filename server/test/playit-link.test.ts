@@ -108,7 +108,7 @@ async function fixture(t: TestContext, { incompatible = false, downloadContent =
     return { ...agent, linking };
   }
 
-  return { service, secretPath, managedPath, download, spawn, stop, beginClaim };
+  return { root, service, secretPath, managedPath, download, spawn, stop, agents, beginClaim };
 }
 
 test('linking repairs an incompatible managed agent and promotes a completed staged claim', { timeout: 10_000 }, async (t) => {
@@ -180,4 +180,46 @@ test('starting without a parsed credential fails before launching Playit', { tim
   assert.equal((await service.getStatus()).secretExists, false);
   await assert.rejects(service.startAgent(), /link|secret key|credential/i);
   assert.equal(spawn.mock.callCount(), 0);
+});
+
+test('starting a linked agent uses file logging without the conflicting stdout flag', { timeout: 10_000 }, async (t) => {
+  const { root, service, secretPath, spawn, agents } = await fixture(t);
+  await writeFile(secretPath, secretToml(existingKey));
+  t.mock.method(service, 'isProcessRunning', async () => spawn.mock.calls.some(({ result }) =>
+    result !== undefined && result.exitCode === null && result.signalCode === null && !result.killed));
+
+  const launched = new Promise<{ child: FakeAgent; args: string[] }>((resolve) => agents.once('spawn', resolve));
+  const starting = service.startAgent();
+  const { child, args } = await launched;
+  assert.deepEqual(args, ['--secret_path', secretPath, '-l', path.join(root, 'playit.log'), 'start']);
+  assert.equal((await starting).isRunning, true);
+  assert.equal((await service.startAgent()).isRunning, true);
+  assert.equal(spawn.mock.callCount(), 1);
+  assert.equal(await readFile(secretPath, 'utf8'), secretToml(existingKey));
+
+  child.finish(0);
+  assert.equal((await service.getStatus()).isRunning, false);
+});
+
+test('an immediate agent exit reports failure and permits another start', { timeout: 10_000 }, async (t) => {
+  const { service, secretPath, agents, spawn } = await fixture(t);
+  await writeFile(secretPath, secretToml(existingKey));
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    agents.once('spawn', ({ child }: { child: FakeAgent }) => queueMicrotask(() => child.finish(101)));
+    await assert.rejects(service.startAgent(), /stopped during startup \(exit code 101\)/);
+    assert.equal((await service.getStatus()).isRunning, false);
+  }
+  assert.equal(spawn.mock.callCount(), 2);
+  assert.equal(await readFile(secretPath, 'utf8'), secretToml(existingKey));
+});
+
+test('a launch error is reported instead of claiming the agent started', { timeout: 10_000 }, async (t) => {
+  const { service, secretPath, agents } = await fixture(t);
+  await writeFile(secretPath, secretToml(existingKey));
+  agents.once('spawn', ({ child }: { child: FakeAgent }) => queueMicrotask(() => {
+    child.emit('error', new Error('spawn EACCES'));
+  }));
+  await assert.rejects(service.startAgent(), /Could not launch Playit: spawn EACCES/);
+  assert.equal((await service.getStatus()).isRunning, false);
 });
