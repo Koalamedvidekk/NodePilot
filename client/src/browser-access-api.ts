@@ -29,6 +29,10 @@ export interface BrowserAccessStatus {
     reasons: string[];
     targetClients: string[];
     verified: boolean;
+    backendVersion?: string;
+    backendProtocol?: number | null;
+    gatewayUpgradeRequired?: boolean;
+    notes?: string[];
   };
   versions: Record<string, string>;
   logs: Array<{ timestamp: string; message: string }>;

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { BROWSER_AUTH_JAR_BASE64, BROWSER_AUTH_JAR_SHA256 } from '../services/browser-auth-artifact.js';
-import { browserJavaDependencies, cloudflaredDependency, type BrowserDependency } from '../services/browser-dependency-manifest.js';
+import { BROWSER_GATEWAY_JAVA_MAJOR, browserJavaDependencies, cloudflaredDependency, type BrowserDependency } from '../services/browser-dependency-manifest.js';
 import { BrowserDependencyService } from '../services/browser-dependencies.js';
 
 const payload = Buffer.from('a verified fixture dependency');
@@ -16,6 +16,8 @@ const fixture: BrowserDependency = {
 };
 
 test('browser dependency pins identify official immutable assets and the bundled companion passes integrity', () => {
+  assert.equal(new BrowserDependencyService('unused').getManifest().javaMajor, BROWSER_GATEWAY_JAVA_MAJOR);
+  assert.equal(BROWSER_GATEWAY_JAVA_MAJOR, 25);
   for (const dependency of browserJavaDependencies) {
     assert.match(dependency.sha256, /^[a-f0-9]{64}$/);
     assert.ok(dependency.url.startsWith('https://github.com/') || dependency.url.startsWith('https://fill-data.papermc.io/'));

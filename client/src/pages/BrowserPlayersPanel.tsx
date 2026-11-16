@@ -396,6 +396,8 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                   : " are unavailable for this configuration"}
                 . Older clients can show translated blocks and features.
               </p>
+              {status.capabilities.backendVersion && <p>Minecraft server version · {status.capabilities.backendVersion}</p>}
+              {status.capabilities.notes?.map(note => <p key={note}>{note}</p>)}
             </div>
             {Object.keys(status.versions).length > 0 && (
               <details className="browser-details">

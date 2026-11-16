@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { AppError } from '../lib/errors.js';
 import { resolveInside, resolveManagedServerRoot } from '../lib/paths.js';
 import { BROWSER_AUTH_JAR_BASE64, BROWSER_AUTH_JAR_SHA256 } from './browser-auth-artifact.js';
-import { browserJavaDependencies, cloudflaredDependency, type BrowserDependency } from './browser-dependency-manifest.js';
+import { BROWSER_GATEWAY_JAVA_MAJOR, browserJavaDependencies, cloudflaredDependency, type BrowserDependency } from './browser-dependency-manifest.js';
 
 const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 
@@ -45,7 +45,7 @@ export class BrowserDependencyService {
 
   getManifest(): { javaMajor: number; dependencies: readonly BrowserDependency[]; supported: boolean } {
     const cloudflared = cloudflaredDependency(process.platform, process.arch);
-    return { javaMajor: 17, dependencies: [...browserJavaDependencies, ...(cloudflared ? [cloudflared] : [])], supported: Boolean(cloudflared) };
+    return { javaMajor: BROWSER_GATEWAY_JAVA_MAJOR, dependencies: [...browserJavaDependencies, ...(cloudflared ? [cloudflared] : [])], supported: Boolean(cloudflared) };
   }
 
   install(serverId: string, progress?: (message: string) => void): Promise<BrowserInstalledDependencies> {
@@ -120,7 +120,7 @@ export class BrowserDependencyService {
       directory, velocityJar: path.join(directory, 'velocity.jar'),
       cloudflared: path.join(directory, tunnel.fileName),
       bungeeGuardJar: path.join(directory, 'backend', 'BungeeGuard.jar'),
-      authPluginJar, javaMajor: 17, versions,
+      authPluginJar, javaMajor: BROWSER_GATEWAY_JAVA_MAJOR, versions,
     };
   }
 

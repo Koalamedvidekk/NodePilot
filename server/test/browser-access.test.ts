@@ -17,6 +17,7 @@ import Fastify from 'fastify';
 import { openDatabase } from '../db.js';
 import { asAppError } from '../lib/errors.js';
 import { parseJavaProperties } from '../lib/java-properties.js';
+import { minecraftReleaseProtocol } from '../lib/minecraft-protocol-version.js';
 import { ServerRepository } from '../repositories/server-repository.js';
 import { registerBrowserAccessRoutes } from '../routes/browser-access-routes.js';
 import { BrowserAccessService } from '../services/browser-access-service.js';
@@ -104,8 +105,8 @@ async function fixture(t: TestContext, options: { missingYaml?: boolean; downloa
   const installed: BrowserInstalledDependencies = { directory: dependenciesRoot,
     velocityJar: path.join(dependenciesRoot, 'velocity.jar'), cloudflared: path.join(dependenciesRoot, 'cloudflared'),
     bungeeGuardJar: path.join(dependenciesRoot, 'plugins/BungeeGuard.jar'),
-    authPluginJar: path.join(dependenciesRoot, 'plugins/NodePilotBrowserAuth.jar'), javaMajor: 17,
-    versions: { velocity: 'fixture', eaglerxserver: 'fixture', cloudflared: 'fixture' } };
+    authPluginJar: path.join(dependenciesRoot, 'plugins/NodePilotBrowserAuth.jar'), javaMajor: 25,
+    versions: { velocity: '4.3.1-45', eaglerxserver: 'fixture', cloudflared: 'fixture' } };
   let installations = 0;
   const dependencies = { install: async () => {
     installations += 1;
@@ -156,6 +157,58 @@ async function fixture(t: TestContext, options: { missingYaml?: boolean; downloa
     setMaintenanceError: (value: Error) => { maintenanceError = value; },
     get installations() { return installations; } };
 }
+
+test('browser availability uses exact stable protocol mappings including 26.x and rejects unknown releases before downloads', async (t) => {
+  const state = await fixture(t);
+  for (const [version, protocol] of [['1.19',759],['1.21.11',774],['26.1',775],['26.1.1',775],['26.1.2',775],['26.2',776],['26.3',777],['26.3.0',777]] as const) {
+    state.database.prepare('UPDATE servers SET version=? WHERE id=?').run(version, serverId);
+    const status = await state.service.status(serverId);
+    assert.equal(status.capabilities.available, true, version);
+    assert.equal(status.capabilities.backendProtocol, protocol);
+    assert.equal(minecraftReleaseProtocol(version), protocol);
+    assert.ok(status.capabilities.targetClients.some(client => client.includes('26.3')));
+  }
+  for (const version of ['1.19.9', '1.21.12', '26.1.3', '26.3.1', '26.4', '26.3-snapshot-1']) {
+    state.database.prepare('UPDATE servers SET version=? WHERE id=?').run(version, serverId);
+    assert.equal(minecraftReleaseProtocol(version), null);
+    assert.equal((await state.service.status(serverId)).capabilities.available, false);
+    await assert.rejects(state.service.inspect(serverId), { code: 'browser_unsupported' });
+  }
+  assert.equal(state.installations, 0);
+});
+
+test('26.3 setup pins the real backend protocol and enables bounded protocol-v5 negotiation', async (t) => {
+  const state = await fixture(t);
+  state.database.prepare('UPDATE servers SET version=? WHERE id=?').run('26.3', serverId);
+  const status = await state.setup();
+  assert.equal(status.capabilities.backendVersion, '26.3');
+  const via = parse(await readFile(path.join(state.installed.directory, 'plugins/viaversion/config.yml'), 'utf8'));
+  assert.deepEqual(via['velocity-servers'], { default: 777, nodepilot: 777 });
+  const settings = await readFile(path.join(state.installed.directory, 'plugins/eaglerxserver/settings.toml'), 'utf8');
+  assert.match(settings, /enable_authentication_events = true/);
+  assert.match(settings, /\[protocols\]\nprotocol_v5_allowed = true\nmax_minecraft_protocol_v5 = 777/);
+  await state.service.disable(serverId);
+  assert.equal(parseJavaProperties(await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8'))['online-mode'], 'true');
+});
+
+test('previously configured gateways retain their files and explain how to upgrade for modern clients', async (t) => {
+  const state = await fixture(t);
+  await state.setup();
+  const record = state.row();
+  record.installed.versions.velocity = '3.4.0-566';
+  state.saveRow(record);
+  const before = await readFile(path.join(state.installed.directory, 'velocity.toml'), 'utf8');
+  let status = await state.service.status(serverId);
+  assert.equal(status.capabilities.available, true);
+  assert.equal(status.capabilities.gatewayUpgradeRequired, true);
+  assert.ok(status.capabilities.notes.some(note => /Java 25/.test(note)));
+  assert.ok(!status.capabilities.targetClients.some(client => client.includes('26.3')));
+  assert.equal(await readFile(path.join(state.installed.directory, 'velocity.toml'), 'utf8'), before);
+  state.database.prepare('UPDATE servers SET version=? WHERE id=?').run('26.3', serverId);
+  status = await state.service.status(serverId);
+  assert.equal(status.capabilities.available, false);
+  assert.ok(status.capabilities.reasons.some(reason => /Set Up again/.test(reason)));
+});
 
 test('browser inspection refuses active servers and shared maintenance before downloading anything', async (t) => {
   const state = await fixture(t);

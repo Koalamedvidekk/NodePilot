@@ -28,6 +28,7 @@ const serverId = "12345678-1234-4234-8234-123456789abc";
 const otherId = "12345678-1234-4234-8234-123456789abd";
 const bedrockId = "12345678-1234-4234-8234-123456789abe";
 const modernId = "12345678-1234-4234-8234-123456789abf";
+const futureId = "12345678-1234-4234-8234-123456789ac0";
 const pin = "browser-api-fixture-pin";
 const password = "browser-fixture-password";
 const replacementPassword = "browser-replacement-password";
@@ -164,9 +165,15 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
     },
     {
       id: modernId,
+      directory: "modern-fixture",
+      software: "paper",
+      version: "26.3",
+    },
+    {
+      id: futureId,
       directory: "future-fixture",
       software: "paper",
-      version: "26.1",
+      version: "26.4",
     },
   ];
   for (const [index, fixture] of fixtures.entries()) {
@@ -312,9 +319,13 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
     422,
   );
   result = await request(route(modernId));
+  assert.equal(result.body.capabilities.available, true);
+  assert.equal(result.body.capabilities.backendProtocol, 777);
+  assert.ok(result.body.capabilities.targetClients.some(client => /26\.3/.test(client)));
+  result = await request(route(futureId));
   assert.equal(result.body.capabilities.available, false);
   assert.ok(
-    result.body.capabilities.reasons.some((reason) => /1\.21\.11/.test(reason)),
+    result.body.capabilities.reasons.some((reason) => /26\.3/.test(reason)),
   );
   assert.equal(
     (

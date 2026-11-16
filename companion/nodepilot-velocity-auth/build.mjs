@@ -1,4 +1,4 @@
-// Run with a JDK 17+ on PATH. Only NodePilot's own classes/resources are bundled.
+// Run with a JDK 25+ on PATH. Only NodePilot's own classes/resources are bundled.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -10,7 +10,7 @@ const build = path.join(root, '.build');
 const classes = path.join(build, 'classes');
 await mkdir(classes, { recursive: true });
 const dependencies = [
-  ['velocity.jar', 'https://fill-data.papermc.io/v1/objects/fb599cbda6a6d01decce5e281f71f51cae7cacffcfafca32a09601f407b0583e/velocity-3.4.0-566.jar', 'fb599cbda6a6d01decce5e281f71f51cae7cacffcfafca32a09601f407b0583e'],
+  ['velocity.jar', 'https://fill-data.papermc.io/v1/objects/0844bcabdcdb4f5b875906fd4c3365bc1bb76918e42bc595ed88ad195258dd75/velocity-4.3.1-45.jar', '0844bcabdcdb4f5b875906fd4c3365bc1bb76918e42bc595ed88ad195258dd75'],
   ['EaglerXServer.jar', 'https://github.com/lax1dude/eaglerxserver/releases/download/v1.1.1/EaglerXServer.jar', '468cb07eb7ca466b21b439be75156d3d01579327f4c6dae5b67d471137a64208'],
 ];
 for (const [fileName, url, sha256] of dependencies) {

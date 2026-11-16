@@ -211,10 +211,19 @@ For automatic startup when a player joins and Minecraft startup notices, see the
 ## Browser Players
 
 Open a server and choose **Browser Players** to prepare an Eaglercraft gateway.
-The pinned gateway currently targets Paper/Purpur 1.19 through 1.21.11 and
-Eaglercraft 1.8/1.12.2 clients. Minecraft 26.x and other server software show an
-availability explanation. This integration remains experimental until the exact
-server and client combination has passed a playable connection check.
+The pinned gateway targets known stable Paper/Purpur releases from 1.19 through
+26.3, including 26.1/26.1.1/26.1.2 and 26.2. It accepts Eaglercraft 1.8/1.12.2
+clients and EaglerX protocol-v5 clients using Minecraft 26.3. The browser client
+must support an editable profile name and the NodePilot password prompt.
+New setups require **Java 25 or newer**, including on older Minecraft backends.
+Other software, snapshots and unknown future releases show an availability reason.
+Browser compatibility remains experimental; see the
+[26.3 verification report](docs/testing/browser-26.3-2026-11-16.md).
+
+Existing configured gateways retain their components and accounts. To upgrade one
+for 26.3 browser clients, stop Minecraft, choose **Disable**, then **Set Up** and
+approve the new gateway configuration. Choose **Enable** and share its new address.
+This preserves the world's files and browser account UUIDs.
 
 Stop Minecraft, choose **Set Up**, and wait for the verified gateway components
 to download. Review the connection and authentication changes, select the

@@ -6,11 +6,13 @@ export interface BrowserDependency {
   sha256: string;
 }
 
+export const BROWSER_GATEWAY_JAVA_MAJOR = 25;
+
 export const browserJavaDependencies: readonly BrowserDependency[] = [
   {
-    id: 'velocity', version: '3.4.0-566', fileName: 'velocity.jar',
-    url: 'https://fill-data.papermc.io/v1/objects/fb599cbda6a6d01decce5e281f71f51cae7cacffcfafca32a09601f407b0583e/velocity-3.4.0-566.jar',
-    sha256: 'fb599cbda6a6d01decce5e281f71f51cae7cacffcfafca32a09601f407b0583e',
+    id: 'velocity', version: '4.3.1-45', fileName: 'velocity.jar',
+    url: 'https://fill-data.papermc.io/v1/objects/0844bcabdcdb4f5b875906fd4c3365bc1bb76918e42bc595ed88ad195258dd75/velocity-4.3.1-45.jar',
+    sha256: '0844bcabdcdb4f5b875906fd4c3365bc1bb76918e42bc595ed88ad195258dd75',
   },
   {
     id: 'eagler', version: '1.1.1', fileName: 'EaglerXServer.jar',

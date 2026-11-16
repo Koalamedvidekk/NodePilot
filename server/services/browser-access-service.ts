@@ -34,6 +34,7 @@ import type { ServerRepository } from "../repositories/server-repository.js";
 import type { ServerRecord } from "../types.js";
 import type { JavaService } from "./java-service.js";
 import { BrowserDependencyService } from "./browser-dependencies.js";
+import { BROWSER_GATEWAY_JAVA_MAJOR, browserJavaDependencies } from "./browser-dependency-manifest.js";
 import {
   patchYaml,
   browserConfigurationPath,
@@ -270,12 +271,14 @@ export class BrowserAccessService {
     const reasons: string[] = [];
     if (!["paper", "purpur"].includes(server.software))
       reasons.push("Browser Players currently requires Paper or Purpur.");
-    const version = server.version.match(/^1\.(19|20|21)(?:\.(\d{1,2}))?$/);
-    const maximumPatch: Record<string, number> = { "19": 4, "20": 6, "21": 11 };
-    if (!version || Number(version[2] ?? 0) > maximumPatch[version[1]])
+    const protocol = minecraftReleaseProtocol(server.version);
+    const gatewayUpgradeRequired = Boolean(record?.configured && record.installed?.versions.velocity !== browserJavaDependencies.find(entry => entry.id === "velocity")!.version);
+    if (protocol === null)
       reasons.push(
-        "The pinned Velocity gateway targets Minecraft 1.19 through 1.21.11. This Minecraft version needs a separately verified gateway.",
+        "Browser Players targets known stable Minecraft releases from 1.19 through 26.3. This version has no tested gateway protocol mapping.",
       );
+    if (protocol !== null && protocol >= 775 && gatewayUpgradeRequired)
+      reasons.push("This server needs the current browser gateway. Stop Minecraft, disable Browser Players, then run Set Up again with Java 25 or newer.");
     if (
       !["win32", "linux"].includes(process.platform) ||
       !["x64", "arm64"].includes(process.arch) ||
@@ -310,7 +313,13 @@ export class BrowserAccessService {
       capabilities: {
         available: reasons.length === 0,
         reasons,
-        targetClients: ["Eaglercraft 1.8", "Eaglercraft 1.12.2"],
+        targetClients: ["Eaglercraft 1.8", "Eaglercraft 1.12.2", ...(!gatewayUpgradeRequired ? ["Eaglercraft 26.3 (EaglerX protocol v5)"] : [])],
+        backendVersion: server.version,
+        backendProtocol: protocol,
+        gatewayUpgradeRequired,
+        notes: gatewayUpgradeRequired
+          ? ["This server retains its previous gateway. For 26.3 browser clients, stop Minecraft, disable Browser Players, then Set Up and approve the new gateway. Java 25 or newer is required."]
+          : ["The current gateway requires Java 25 or newer. Use an EaglerX protocol-v5 client with an editable profile name for Minecraft 26.3 browser connections."],
         verified: false,
       },
       versions: record?.installed?.versions ?? {},
@@ -363,12 +372,12 @@ export class BrowserAccessService {
     return this.status(id);
   }
   private async prepare(server: ServerRecord): Promise<void> {
-    const usable = await this.java.findUsable(21);
+    const usable = await this.java.findUsable(BROWSER_GATEWAY_JAVA_MAJOR);
     if (!usable)
       throw new AppError(
         422,
         "browser_java_missing",
-        "Install Java 21 or newer in Host Settings before preparing Browser Players.",
+        "Install Java 25 or newer in Host Settings before preparing Browser Players. The current Velocity gateway requires it, including for older Minecraft backends.",
       );
     const root = await resolveManagedServerRoot(
       this.options.serversDirectory,
@@ -656,7 +665,7 @@ export class BrowserAccessService {
     await writeConfiguration(
       root,
       "plugins/eaglerxserver/settings.toml",
-      "enable_authentication_events = true\n",
+      "enable_authentication_events = true\n[protocols]\nprotocol_v5_allowed = true\nmax_minecraft_protocol_v5 = 777\n",
     );
     await writeConfiguration(
       root,
