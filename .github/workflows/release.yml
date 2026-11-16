@@ -46,6 +46,7 @@ jobs:
           node scripts/test-addon-queue-api.mjs
           node scripts/test-import-api.mjs
           node scripts/test-browser-access-api.mjs
+          node scripts/test-server-templates.mjs
 
   release:
     name: Test, package, and publish
@@ -114,6 +115,7 @@ jobs:
           node scripts/test-wake-progress-ui.mjs
           node scripts/test-playit-link.mjs
           node scripts/test-browser-players-ui.mjs
+          node scripts/test-server-templates.mjs --ui
 
       - name: Create the verified updater package
         id: package

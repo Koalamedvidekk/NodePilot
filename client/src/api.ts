@@ -11,6 +11,7 @@ import type {
   MinecraftVersion,
   ServerVersionStatus,
   Server,
+  ServerTemplate,
   ServerProperties,
   SystemMetrics,
   UpdateServerInput,
@@ -231,8 +232,13 @@ export const api = {
     return normalizeSystem(await request<unknown>('/system'));
   },
 
-  async minecraftVersions(software: ServerSoftware | string): Promise<MinecraftVersion[]> {
+  async minecraftTemplates(): Promise<ServerTemplate[]> {
+    return unwrap(await request<{ templates: ServerTemplate[] }>('/minecraft/templates')).templates;
+  },
+
+  async minecraftVersions(software: ServerSoftware | string, templateId?: string): Promise<MinecraftVersion[]> {
     const query = new URLSearchParams({ software });
+    if (templateId) query.set('templateId', templateId);
     const payload = unwrap(await request<unknown>(`/minecraft/versions?${query}`));
     const values = Array.isArray(payload)
       ? payload
@@ -352,6 +358,10 @@ export const api = {
           port: input.port,
           memoryMb: input.memoryMb,
           eulaAccepted: input.eulaAccepted,
+          javaPath: input.javaPath,
+          enablePlayit: input.enablePlayit,
+          templateId: input.templateId,
+          templateSettings: input.templateSettings,
         }),
       }),
     );

@@ -52,6 +52,7 @@ import { registerBrowserAccessRoutes } from './routes/browser-access-routes.js';
 import { UpdateService } from './services/update-service.js';
 import { ServerVersionService } from './services/server-version-service.js';
 import { parseMemoryMb, validateCustomJvmArgs } from './lib/settings-helpers.js';
+import { filterTemplateVersions, listServerTemplates, requireServerTemplate, resolveServerTemplate, templateSettingsSchema } from './lib/server-templates.js';
 import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, JavaInstallation, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
 
 let config = getConfig();
@@ -70,6 +71,8 @@ const createServerSchema = z.object({
   eulaAccepted: z.literal(true, { error: 'You must explicitly accept the Minecraft EULA.' }),
   javaPath: z.string().min(1).max(1_024).optional(),
   enablePlayit: z.boolean().optional().default(false),
+  templateId: z.string().min(1).max(64).optional(),
+  templateSettings: templateSettingsSchema.partial().optional(),
 }).refine((value) => Boolean(value.software ?? value.flavor), 'Choose a server software implementation.');
 const updateServerSchema = z.object({
   name: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f\r\n]/.test(value), 'Name cannot contain control characters.').optional(),
@@ -155,7 +158,7 @@ const playitSecretSchema = z.object({
   secretKey: z.string().trim().min(1).max(256),
 });
 const commandSchema = z.object({ command: z.string().min(1).max(500) });
-const versionQuerySchema = z.object({ flavor: flavorSchema.optional(), software: softwareSchema.optional() }).refine(
+const versionQuerySchema = z.object({ flavor: flavorSchema.optional(), software: softwareSchema.optional(), templateId: z.string().min(1).max(64).optional() }).refine(
   (value) => Boolean(value.software ?? value.flavor),
   'Choose a server software implementation.',
 );
@@ -544,9 +547,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { ok: true, installation };
   });
 
+  app.get('/api/minecraft/templates', async () => ({ templates: listServerTemplates() }));
   app.get('/api/minecraft/versions', async (request) => {
     const input = versionQuerySchema.parse(request.query);
-    return { versions: await minecraft.getVersions(selectedSoftware(input)) };
+    const software = selectedSoftware(input);
+    const template = input.templateId ? requireServerTemplate(input.templateId, software) : undefined;
+    const versions = await minecraft.getVersions(software);
+    return { versions: template ? filterTemplateVersions(template, versions) : versions };
   });
   app.get('/api/minecraft/requirements', async (request) => {
     const input = requirementsQuerySchema.parse(request.query);
@@ -670,6 +677,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.post('/api/servers', async (request, reply) => {
     const input = createServerSchema.parse(request.body);
     const software = selectedSoftware(input);
+    const template = resolveServerTemplate(input.templateId, software, input.version, input.templateSettings);
     await minecraft.assertVersionAvailable(software, input.version);
     const requiredJavaMajor = await minecraft.getRequiredJavaMajor(software, input.version);
     let usableJava: { installation: { path: string }; warning?: string } | null = null;
@@ -711,7 +719,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (usableJava) {
         created = repository.update(id, { javaPath: usableJava.installation.path });
       }
-      const installed = await minecraft.install(created);
+      const installed = await minecraft.install(created, template);
       created = repository.setRuntimeConfiguration(id, installed);
       const ready = repository.markReady(id);
 

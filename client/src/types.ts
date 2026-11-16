@@ -167,6 +167,29 @@ export interface CreateServerInput {
   javaPath?: string;
   memoryMb?: number;
   enablePlayit?: boolean;
+  templateId?: string;
+  templateSettings?: ServerTemplateSettings;
+}
+
+export interface ServerTemplateSettings {
+  gameMode: 'survival' | 'creative' | 'adventure' | 'spectator';
+  difficulty: 'peaceful' | 'easy' | 'normal' | 'hard';
+  hardcore: boolean;
+  whitelist: boolean;
+  maxPlayers: number;
+  viewDistance: number;
+  structures: boolean;
+  seed: string;
+}
+
+export interface ServerTemplate {
+  id: string;
+  name: string;
+  description: string;
+  defaultSoftware: ProvisionableServerSoftware;
+  software: ProvisionableServerSoftware[];
+  minimumVersion: string;
+  defaults: ServerTemplateSettings;
 }
 
 export interface UpdateServerInput {

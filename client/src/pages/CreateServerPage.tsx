@@ -3,13 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
-import type { JavaDiscovery, MinecraftRequirements, MinecraftVersion, ProvisionableServerSoftware } from '../types';
+import type { JavaDiscovery, MinecraftRequirements, MinecraftVersion, ProvisionableServerSoftware, ServerTemplate, ServerTemplateSettings } from '../types';
 import { errorMessage, titleCase } from '../utils';
 
 type WizardStep = 1 | 2 | 3;
 
 const steps: Array<{ number: WizardStep; title: string; detail: string }> = [
-  { number: 1, title: 'Choose software', detail: 'Pick a Minecraft distribution and version.' },
+  { number: 1, title: 'Template & version', detail: 'Choose a starting point, software and version.' },
   { number: 2, title: 'Configure', detail: 'Name the server and review its local runtime.' },
   { number: 3, title: 'Review & create', detail: 'Accept the EULA and create the server.' },
 ];
@@ -39,6 +39,12 @@ export function CreateServerPage() {
   const [step, setStep] = useState<WizardStep>(1);
   const [edition, setEdition] = useState<'java' | 'bedrock'>('java');
   const [software, setSoftware] = useState<ProvisionableServerSoftware>('paper');
+  const [templates, setTemplates] = useState<ServerTemplate[]>([]);
+  const [templateId, setTemplateId] = useState('');
+  const [templateSettings, setTemplateSettings] = useState<ServerTemplateSettings>();
+  const [templatesError, setTemplatesError] = useState<string>();
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const selectedTemplate = templates.find(item => item.id === templateId);
   const [versions, setVersions] = useState<MinecraftVersion[]>([]);
   const [version, setVersion] = useState('');
   const [java, setJava] = useState<JavaDiscovery>();
@@ -62,9 +68,30 @@ export function CreateServerPage() {
   const [selectedDownloadMajor, setSelectedDownloadMajor] = useState<number>(21);
 
   const switchEdition = (nextEdition: 'java' | 'bedrock') => {
+    if (nextEdition === edition) return;
     setEdition(nextEdition);
     setSoftware(nextEdition === 'bedrock' ? 'bedrock' : 'paper');
+    setTemplateId('');
+    setTemplateSettings(undefined);
   };
+
+  const selectTemplate = (id: string) => {
+    const template = templates.find(item => item.id === id);
+    setTemplateId(id);
+    setTemplateSettings(template ? { ...template.defaults } : undefined);
+    if (template && !template.software.includes(software)) setSoftware(template.defaultSoftware);
+    setError(undefined);
+  };
+
+  const loadTemplates = () => {
+    setLoadingTemplates(true);
+    setTemplatesError(undefined);
+    void api.minecraftTemplates().then(setTemplates)
+      .catch(cause => setTemplatesError(errorMessage(cause)))
+      .finally(() => setLoadingTemplates(false));
+  };
+
+  useEffect(loadTemplates, []);
 
   useEffect(() => {
     void api.getHostSettings()
@@ -74,20 +101,21 @@ export function CreateServerPage() {
 
   useEffect(() => {
     let active = true;
+    const preferredVersion = version;
     setLoadingVersions(true);
     setError(undefined);
     setVersions([]);
     setVersion('');
-    void api.minecraftVersions(software)
+    void api.minecraftVersions(software, templateId || undefined)
       .then((result) => {
         if (!active) return;
         setVersions(result);
-        setVersion(latestVersion(result));
+        setVersion(result.some(item => item.id === preferredVersion) ? preferredVersion : latestVersion(result));
       })
       .catch((cause) => active && setError(`Couldn’t load ${titleCase(software)} versions: ${errorMessage(cause)}`))
       .finally(() => active && setLoadingVersions(false));
     return () => { active = false; };
-  }, [software]);
+  }, [software, templateId]);
 
   useEffect(() => {
     let active = true;
@@ -162,6 +190,11 @@ export function CreateServerPage() {
   const javaReady = isBedrock || (Boolean(requirements) && compatibleJava.length > 0);
   const normalizedPort = port.trim() ? Number(port) : undefined;
   const normalizedMemory = memoryMb.trim() ? Number(memoryMb) : undefined;
+  const templateError = templateId && !selectedTemplate ? 'Choose an available template or Custom setup.'
+    : templateSettings && (!Number.isInteger(templateSettings.maxPlayers) || templateSettings.maxPlayers < 1 || templateSettings.maxPlayers > 1000)
+      ? 'Player limit must be a whole number from 1 to 1000.'
+      : templateSettings && (!Number.isInteger(templateSettings.viewDistance) || templateSettings.viewDistance < 3 || templateSettings.viewDistance > 32)
+        ? 'View distance must be a whole number from 3 to 32 chunks.' : undefined;
   const formError = !name.trim()
     ? 'Give the server a name.'
     : !version
@@ -170,7 +203,7 @@ export function CreateServerPage() {
         ? 'Port must be a whole number from 1 to 65535.'
         : normalizedMemory !== undefined && (!Number.isInteger(normalizedMemory) || normalizedMemory < 256)
           ? 'Memory must be at least 256 MB.'
-          : undefined;
+          : templateError;
 
   const moveForward = () => {
     if (step === 1 && !version) {
@@ -212,6 +245,7 @@ export function CreateServerPage() {
         memoryMb: normalizedMemory,
         eulaAccepted: true,
         enablePlayit,
+        ...(selectedTemplate && templateSettings ? { templateId: selectedTemplate.id, templateSettings } : {}),
       });
       if (!server.id) throw new Error('The server was created, but NodePilot did not return its identifier.');
       navigate(`/servers/${encodeURIComponent(server.id)}`);
@@ -279,9 +313,33 @@ export function CreateServerPage() {
                 </button>
               </div>
 
+              {edition === 'java' ? (
+                <fieldset className="field-group template-picker">
+                  <legend>Start from a template</legend>
+                  <p className="field-help">Choose a preset, then pick its Minecraft version below. Gameplay settings can be customized in the next step.</p>
+                  {templatesError && <div className="inline-alert alert-error" role="alert"><span>Templates could not load: {templatesError}</span><button type="button" className="text-button" onClick={loadTemplates}>Retry</button></div>}
+                  <div className="template-grid">
+                    <label className={`template-card ${!templateId ? 'is-selected' : ''}`}>
+                      <input type="radio" name="template" value="" checked={!templateId} onChange={() => selectTemplate('')} />
+                      <span className="template-card-top"><Icon name="settings" size={19} /><strong>Custom setup</strong><span className="radio-indicator" /></span>
+                      <span className="template-description">Choose any supported software with NodePilot's usual defaults.</span>
+                    </label>
+                    {templates.map(template => (
+                      <label key={template.id} className={`template-card ${templateId === template.id ? 'is-selected' : ''}`}>
+                        <input type="radio" name="template" value={template.id} checked={templateId === template.id} onChange={() => selectTemplate(template.id)} />
+                        <span className="template-card-top"><Icon name="box" size={19} /><strong>{template.name}</strong><span className="radio-indicator" /></span>
+                        <span className="template-description">{template.description}</span>
+                        <span className="template-meta">{template.software.map(titleCase).join(' / ')} · {template.minimumVersion}+</span>
+                      </label>
+                    ))}
+                  </div>
+                  {loadingTemplates && <p className="input-note" role="status">Loading templates… Custom setup is available.</p>}
+                </fieldset>
+              ) : <p className="field-help">Templates are available for Java Edition. Bedrock uses its official server defaults.</p>}
+
               <fieldset className="field-group"><legend>Server software</legend><p className="field-help">Choose a supported implementation. NodePilot only offers versions that its trusted source reports for that software.</p>
                 <div className="flavor-cards">
-                  {softwareOptions.filter((opt) => opt.edition === edition).map((option) => <label key={option.id} className={`flavor-card ${software === option.id ? 'is-selected' : ''}`}>
+                  {softwareOptions.filter((opt) => opt.edition === edition && (!selectedTemplate || selectedTemplate.software.includes(opt.id))).map((option) => <label key={option.id} className={`flavor-card ${software === option.id ? 'is-selected' : ''}`}>
                     <input type="radio" name="software" value={option.id} checked={software === option.id} onChange={() => setSoftware(option.id)} />
                     <span className={`flavor-icon ${option.id}-icon`}>{option.label[0]}</span>
                     <span><strong>{option.label}</strong><small>{option.detail}</small><small className="software-source">{option.source}</small></span>
@@ -303,6 +361,7 @@ export function CreateServerPage() {
                   aria-label="Minecraft version"
                 />
                 {selectedVersion?.releaseDate && <small className="input-note">Released {selectedVersion.releaseDate}</small>}
+                {selectedTemplate && <small className="input-note">{selectedTemplate.name} · stable releases from {selectedTemplate.minimumVersion}. Downloads come from the selected software's official source. No plugins or mods are bundled.</small>}
               </div>
             </div>
           )}
@@ -331,6 +390,28 @@ export function CreateServerPage() {
                   <small className="input-note">{isBedrock ? 'Process memory allocation.' : 'Java heap allocation (2–4 GB vanilla, 6–12+ GB modded).'}</small>
                 </div>
               </div>
+
+              {selectedTemplate && templateSettings && (
+                <fieldset className="field-group template-settings">
+                  <legend>{selectedTemplate.name} settings</legend>
+                  <p className="field-help">Applied once when creating this server. These settings stay editable in Properties and Worlds afterwards.</p>
+                  <div className="form-grid">
+                    <div className="field-group form-field"><span>Default game mode</span><CustomSelect aria-label="Default game mode" value={templateSettings.gameMode} disabled={templateSettings.hardcore} options={['survival', 'creative', 'adventure', 'spectator'].map(value => ({ value, label: titleCase(value) }))} onChange={value => setTemplateSettings({ ...templateSettings, gameMode: value as ServerTemplateSettings['gameMode'] })} /></div>
+                    <div className="field-group form-field"><span>Difficulty</span><CustomSelect aria-label="Template difficulty" value={templateSettings.difficulty} disabled={templateSettings.hardcore} options={['peaceful', 'easy', 'normal', 'hard'].map(value => ({ value, label: titleCase(value) }))} onChange={value => setTemplateSettings({ ...templateSettings, difficulty: value as ServerTemplateSettings['difficulty'] })} /></div>
+                    <label className="field-group form-field"><span>Player limit</span><input type="number" min="1" max="1000" step="1" value={templateSettings.maxPlayers} onChange={event => setTemplateSettings({ ...templateSettings, maxPlayers: Number(event.target.value) })} /></label>
+                    <label className="field-group form-field"><span>View distance (chunks)</span><input type="number" min="3" max="32" step="1" value={templateSettings.viewDistance} onChange={event => setTemplateSettings({ ...templateSettings, viewDistance: Number(event.target.value) })} /><small className="input-note">Higher distances need more memory and CPU.</small></label>
+                    <label className="field-group form-field form-field-wide"><span>World seed <em>optional</em></span><input value={templateSettings.seed} maxLength={128} placeholder="Random seed" onChange={event => setTemplateSettings({ ...templateSettings, seed: event.target.value })} /><small className="input-note">Leave blank for random. Numeric seeds are kept as text to preserve all 64 bits.</small></label>
+                  </div>
+                  <div className="template-toggles">
+                    <label><input type="checkbox" checked={templateSettings.structures} onChange={event => setTemplateSettings({ ...templateSettings, structures: event.target.checked })} /><span>Generate structures</span></label>
+                    <label><input type="checkbox" checked={templateSettings.whitelist} onChange={event => setTemplateSettings({ ...templateSettings, whitelist: event.target.checked })} /><span>Enable whitelist</span></label>
+                    <label><input type="checkbox" checked={templateSettings.hardcore} onChange={event => setTemplateSettings({ ...templateSettings, hardcore: event.target.checked, ...(event.target.checked ? { gameMode: 'survival', difficulty: 'hard' } : {}) })} /><span>Hardcore (one life)</span></label>
+                  </div>
+                  {templateSettings.hardcore && <p className="input-note">Hardcore locks the default game mode to Survival and difficulty to Hard. Players cannot respawn normally after death.</p>}
+                  {templateSettings.whitelist && <p className="input-note">Only listed players can join. Use <code>whitelist add PlayerName</code> in Console to allow each player.</p>}
+                  <button type="button" className="text-button" onClick={() => setTemplateSettings({ ...selectedTemplate.defaults })}>Reset template settings</button>
+                </fieldset>
+              )}
 
               {isBedrock ? (
                 <section className="java-check">
@@ -451,10 +532,17 @@ export function CreateServerPage() {
               <dl className="review-list">
                 <div><dt>Server</dt><dd>{name || 'Unnamed server'}</dd></div>
                 <div><dt>Software</dt><dd>{isBedrock ? 'Bedrock Dedicated Server' : titleCase(software)} {version || '—'}</dd></div>
+                <div><dt>Template</dt><dd>{selectedTemplate?.name ?? 'Custom setup'}</dd></div>
                 <div><dt>Port</dt><dd>{normalizedPort ?? (isBedrock ? 'Auto-select (default 19132)' : 'Auto-select a free port')}</dd></div>
                 <div><dt>Memory</dt><dd>{normalizedMemory ? `${normalizedMemory} MB` : 'NodePilot default'}</dd></div>
                 <div><dt>Java</dt><dd>{isBedrock ? 'None (Native C++ Binary)' : requiredJava ? `Java ${requiredJava}+` : 'Validated on create'}</dd></div>
               </dl>
+              {selectedTemplate && templateSettings && <div className="template-review"><strong>{selectedTemplate.name} · Minecraft {version}</strong><dl className="review-list">
+                <div><dt>Gameplay</dt><dd>{titleCase(templateSettings.gameMode)} · {titleCase(templateSettings.difficulty)}{templateSettings.hardcore ? ' · Hardcore' : ''}</dd></div>
+                <div><dt>Players / view distance</dt><dd>{templateSettings.maxPlayers} players · {templateSettings.viewDistance} chunks</dd></div>
+                <div><dt>World seed</dt><dd>{templateSettings.seed || 'Random'}</dd></div>
+                <div><dt>Structures / whitelist</dt><dd>{templateSettings.structures ? 'Enabled' : 'Disabled'} / {templateSettings.whitelist ? 'Enabled' : 'Disabled'}</dd></div>
+              </dl><p className="input-note">No plugins or mods are installed by these presets. Minecraft generates the world on the first normal start.</p></div>}
 
               {!isBedrock && !javaReady && (
                 <div className="java-downloader-card" style={{ marginBottom: '16px' }}>
