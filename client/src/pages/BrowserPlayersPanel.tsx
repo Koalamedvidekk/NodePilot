@@ -528,20 +528,20 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                     aria-label="Account password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    minLength={10}
+                    minLength={4}
                     maxLength={127}
                     autoComplete="new-password"
                     required
                     disabled={busy || !stopped}
                   />
                   <small className="input-note">
-                    Use 10–127 characters. Share the password privately.
+                    Use 4–127 characters. Share the password privately.
                   </small>
                 </label>
                 <button
                   className="button button-primary"
                   type="submit"
-                  disabled={busy || !stopped || !name || password.length < 10}
+                  disabled={busy || !stopped || !name || password.length < 4}
                 >
                   <Icon name="plus" size={16} />{" "}
                   {action === "account" ? "Creating…" : "Create Account"}
@@ -609,7 +609,7 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                       aria-label={`New password for ${resetAccount.name}`}
                       value={resetPassword}
                       onChange={(event) => setResetPassword(event.target.value)}
-                      minLength={10}
+                      minLength={4}
                       maxLength={127}
                       autoComplete="new-password"
                       required
@@ -620,7 +620,7 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                   <button
                     type="submit"
                     className="button button-primary"
-                    disabled={busy || resetPassword.length < 10}
+                    disabled={busy || resetPassword.length < 4}
                   >
                     Save Password
                   </button>

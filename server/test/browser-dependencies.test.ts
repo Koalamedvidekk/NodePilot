@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -55,6 +55,34 @@ test('an official download HTTP failure leaves no partial artifact', async (t) =
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }));
   await assert.rejects(service.download(fixture, path.join(root, 'fixture.jar')), /HTTP 503/);
   assert.deepEqual(await readdir(root), []);
+});
+
+test('gateway authentication refresh upgrades only its managed companion without downloads and rejects links', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nodepilot-auth-refresh-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const id = '11111111-2222-4333-8444-555555555555';
+  const directory = path.join(root, 'browser-access', id);
+  const plugins = path.join(directory, 'plugins');
+  await mkdir(plugins, { recursive: true });
+  const target = path.join(plugins, 'NodePilotBrowserAuth.jar');
+  await writeFile(target, 'previous managed companion');
+  await writeFile(path.join(directory, 'velocity.jar'), 'retain existing Velocity');
+  await writeFile(path.join(directory, 'velocity.toml'), 'retain existing configuration');
+  const network = t.mock.method(globalThis, 'fetch', async () => { throw new Error('No downloads allowed'); });
+  const service = new BrowserDependencyService(root);
+  assert.equal((await service.refreshAuthCompanion(id)).version, '0.1.1');
+  assert.equal(createHash('sha256').update(await readFile(target)).digest('hex'), BROWSER_AUTH_JAR_SHA256);
+  await service.refreshAuthCompanion(id);
+  assert.equal(network.mock.callCount(), 0);
+  assert.equal(await readFile(path.join(directory, 'velocity.jar'), 'utf8'), 'retain existing Velocity');
+  assert.equal(await readFile(path.join(directory, 'velocity.toml'), 'utf8'), 'retain existing configuration');
+  const preserved = path.join(directory, 'preserved-plugins');
+  await rename(plugins, preserved);
+  await symlink(preserved, plugins, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(service.refreshAuthCompanion(id), /ordinary directory/);
+  assert.equal(await readFile(path.join(directory, 'velocity.jar'), 'utf8'), 'retain existing Velocity');
+  service.cancelAll();
+  await assert.rejects(service.refreshAuthCompanion(id), /cancelled/);
 });
 
 test('dependency installation rejects invalid identities and linked managed directories before network access', async (t) => {

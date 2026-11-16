@@ -30,8 +30,8 @@ const bedrockId = "12345678-1234-4234-8234-123456789abe";
 const modernId = "12345678-1234-4234-8234-123456789abf";
 const futureId = "12345678-1234-4234-8234-123456789ac0";
 const pin = "browser-api-fixture-pin";
-const password = "browser-fixture-password";
-const replacementPassword = "browser-replacement-password";
+const password = "Ab!4";
+const replacementPassword = "Cd@5";
 const route = (id) => "/servers/" + id + "/browser-access";
 let child;
 let database;
@@ -363,7 +363,7 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
     (
       await request(accountsRoute, {
         method: "POST",
-        body: { name: "alex", password: "short" },
+        body: { name: "alex", password: "abc" },
       })
     ).status,
     400,

@@ -52,14 +52,14 @@ function summary(row: AccountRow): BrowserAccount {
 }
 
 function validPassword(password: string): boolean {
-  return typeof password === 'string' && password.length >= 10 && password.length <= 127
+  return typeof password === 'string' && password.length >= 4 && password.length <= 127
     && Boolean(password.trim()) && Buffer.byteLength(password, 'utf8') <= 255
     && Buffer.from(password, 'utf8').toString('utf8') === password;
 }
 
 function validatePassword(password: string): void {
   if (!validPassword(password)) {
-    throw new AppError(400, 'invalid_browser_password', 'Use 10–127 characters within the browser client’s 255-byte password limit. Shorten passwords containing many Unicode characters.');
+    throw new AppError(400, 'invalid_browser_password', 'Use 4–127 characters within the browser client’s 255-byte password limit. Shorten passwords containing many Unicode characters.');
   }
 }
 

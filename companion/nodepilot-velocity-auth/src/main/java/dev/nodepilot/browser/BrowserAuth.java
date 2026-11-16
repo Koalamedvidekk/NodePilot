@@ -61,7 +61,7 @@ public final class BrowserAuth {
     private record NativeApproval(Identity identity, long expiresAt, boolean consumed) {}
 
     static String decodePassword(byte[] supplied) throws CharacterCodingException {
-        if (supplied.length < 10 || supplied.length > 255) {
+        if (supplied.length < 4 || supplied.length > 255) {
             throw new CharacterCodingException();
         }
         // The verified Eaglercraft 1.8-u53 PLAINTEXT handshake sends UTF-8 bytes.
@@ -69,7 +69,7 @@ public final class BrowserAuth {
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT)
                 .decode(ByteBuffer.wrap(supplied)).toString();
-        if (password.length() < 10 || password.length() > 127 || password.trim().isEmpty()) {
+        if (password.length() < 4 || password.length() > 127 || password.trim().isEmpty()) {
             throw new CharacterCodingException();
         }
         return password;
@@ -129,7 +129,7 @@ public final class BrowserAuth {
             byte[] supplied = event.getAuthPasswordDataResponse();
             byte[] authName = event.getAuthUsername();
             if (!ready || event.getAuthType() != EnumAuthType.PLAINTEXT ||
-                    supplied.length < 10 || supplied.length > 255 || authName.length > 64) {
+                    supplied.length < 4 || supplied.length > 255 || authName.length > 64) {
                 return null;
             }
             return EventTask.async(() -> {

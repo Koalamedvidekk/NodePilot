@@ -10,6 +10,7 @@ import { BROWSER_AUTH_JAR_BASE64, BROWSER_AUTH_JAR_SHA256 } from './browser-auth
 import { BROWSER_GATEWAY_JAVA_MAJOR, browserJavaDependencies, cloudflaredDependency, type BrowserDependency } from './browser-dependency-manifest.js';
 
 const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
+export const BROWSER_AUTH_PLUGIN_VERSION = '0.1.1';
 
 export interface BrowserInstalledDependencies {
   directory: string;
@@ -100,8 +101,30 @@ export class BrowserDependencyService {
       await this.download(dependency, destination, signal);
       versions[dependency.id] = dependency.version;
     }
-    const authPluginJar = path.join(plugins, 'NodePilotBrowserAuth.jar');
     signal.throwIfAborted();
+    const authentication = await this.refreshAuthCompanion(serverId);
+    versions['nodepilot-browser-auth'] = authentication.version;
+    return {
+      directory, velocityJar: path.join(directory, 'velocity.jar'),
+      cloudflared: path.join(directory, tunnel.fileName),
+      bungeeGuardJar: path.join(directory, 'backend', 'BungeeGuard.jar'),
+      authPluginJar: authentication.path, javaMajor: BROWSER_GATEWAY_JAVA_MAJOR, versions,
+    };
+  }
+
+  /** Refresh only NodePilot's own companion before a gateway starts. */
+  async refreshAuthCompanion(serverId: string): Promise<{ path: string; version: string }> {
+    if (this.stopped) throw new AppError(409, 'browser_download_cancelled', 'Browser authentication update was cancelled during shutdown.');
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(serverId)) {
+      throw new AppError(400, 'invalid_server_id', 'A valid server identity is required.');
+    }
+    const root = path.join(this.dataDirectory, 'browser-access');
+    if ((await lstat(root)).isSymbolicLink()) throw new AppError(409, 'unsafe_browser_directory', 'The browser access directory must not be a filesystem link.');
+    const directory = await resolveManagedServerRoot(root, serverId.toLowerCase());
+    const plugins = path.join(directory, 'plugins');
+    const metadata = await lstat(plugins);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new AppError(409, 'unsafe_browser_directory', 'The managed plugins directory must be an ordinary directory.');
+    const authPluginJar = path.join(plugins, 'NodePilotBrowserAuth.jar');
     if (await fileHash(authPluginJar) !== BROWSER_AUTH_JAR_SHA256) {
       const bytes = Buffer.from(BROWSER_AUTH_JAR_BASE64, 'base64');
       if (createHash('sha256').update(bytes).digest('hex') !== BROWSER_AUTH_JAR_SHA256) {
@@ -110,18 +133,13 @@ export class BrowserDependencyService {
       const temporary = authPluginJar + '.tmp-' + randomUUID();
       try {
         await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+        if (this.stopped) throw new AppError(409, 'browser_download_cancelled', 'Browser authentication update was cancelled during shutdown.');
         await rename(temporary, authPluginJar);
       } finally {
         await unlink(temporary).catch(() => undefined);
       }
     }
-    versions['nodepilot-browser-auth'] = '0.1.0';
-    return {
-      directory, velocityJar: path.join(directory, 'velocity.jar'),
-      cloudflared: path.join(directory, tunnel.fileName),
-      bungeeGuardJar: path.join(directory, 'backend', 'BungeeGuard.jar'),
-      authPluginJar, javaMajor: BROWSER_GATEWAY_JAVA_MAJOR, versions,
-    };
+    return { path: authPluginJar, version: BROWSER_AUTH_PLUGIN_VERSION };
   }
 
   private async download(dependency: BrowserDependency, destination: string, parentSignal?: AbortSignal): Promise<void> {

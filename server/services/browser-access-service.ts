@@ -773,6 +773,11 @@ export class BrowserAccessService {
     this.running.set(id, live);
     try {
       this.operation(id).phase = "Starting the authenticated browser gateway";
+      const authentication = await this.dependencies.refreshAuthCompanion(id);
+      record.installed.authPluginJar = authentication.path;
+      record.installed.versions["nodepilot-browser-auth"] = authentication.version;
+      this.save(id, record);
+      if (live.stopping || this.stopping) throw new Error("Browser gateway startup was cancelled.");
       await this.authListener(id, record, live);
       const velocity = await this.launchProcess(
         id,

@@ -49,7 +49,7 @@ export async function registerBrowserAccessRoutes(
     const input = z
       .object({
         name: z.string().min(1).max(13),
-        password: z.string().min(10).max(127),
+        password: z.string().min(4).max(127),
       })
       .parse(request.body);
     return {
@@ -60,7 +60,7 @@ export async function registerBrowserAccessRoutes(
     const { id, accountId } = accountParams.parse(request.params);
     await browser.status(id);
     const { password } = z
-      .object({ password: z.string().min(10).max(127) })
+      .object({ password: z.string().min(4).max(127) })
       .parse(request.body);
     return {
       account: await browser.accounts.resetPassword(id, accountId, password),

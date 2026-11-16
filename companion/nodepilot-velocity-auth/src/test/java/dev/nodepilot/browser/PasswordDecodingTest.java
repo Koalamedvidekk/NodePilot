@@ -5,11 +5,12 @@ import java.nio.charset.StandardCharsets;
 
 public final class PasswordDecodingTest {
     public static void main(String[] args) throws Exception {
-        for (String password : new String[] { "fixture-password-123", "příliš-žluťoučký-123", "emoji-🔐-password" }) {
+        for (String password : new String[] { "1234", "äbcд", "fixture-password-123", "příliš-žluťoučký-123", "emoji-🔐-password" }) {
             String actual = BrowserAuth.decodePassword(password.getBytes(StandardCharsets.UTF_8));
             if (!password.equals(actual)) throw new AssertionError("The handshake password did not round trip.");
         }
-        rejects(new byte[9]);
+        rejects("abc".getBytes(StandardCharsets.UTF_8));
+        rejects("    ".getBytes(StandardCharsets.UTF_8));
         rejects(new byte[258]);
         rejects("x".repeat(128).getBytes(StandardCharsets.UTF_8));
         rejects("界".repeat(86).getBytes(StandardCharsets.UTF_8));

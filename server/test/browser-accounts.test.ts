@@ -48,7 +48,7 @@ test('invalid browser names, weak passwords, reserved identities and concurrent 
   const { accounts } = fixture(t);
   await assert.rejects(accounts.create(firstServer, { name: '../Alex', password: firstPassword }), { code: 'invalid_browser_name' });
   await assert.rejects(accounts.create(firstServer, { name: 'abcdefghijklmn', password: firstPassword }), { code: 'invalid_browser_name' });
-  for (const password of ['short', ' '.repeat(10), 'x'.repeat(128), 'invalid-surrogate-\ud800']) {
+  for (const password of ['abc', ' '.repeat(4), 'x'.repeat(128), 'invalid-surrogate-\ud800']) {
     await assert.rejects(accounts.create(firstServer, { name: 'Alex', password }), { code: 'invalid_browser_password' });
   }
   await assert.rejects(accounts.create(firstServer, { name: 'Alex', password: firstPassword }, [{ name: 'NP_ALEX' }]), { code: 'browser_identity_reserved' });
@@ -60,6 +60,18 @@ test('invalid browser names, weak passwords, reserved identities and concurrent 
   const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
   assert.equal((rejected.reason as AppError).code, 'browser_account_exists');
   assert.equal(accounts.list(firstServer).length, 1);
+});
+
+test('four-character passwords work for creation, login and reset while bounds remain enforced', async (t) => {
+  const { accounts } = fixture(t);
+  const account = await accounts.create(firstServer, { name: 'Short', password: '1234' });
+  assert.deepEqual(await accounts.verify(firstServer, account.name, '1234'), { name: account.name, uuid: account.uuid });
+  await accounts.resetPassword(firstServer, account.id, 'abcd');
+  assert.equal(await accounts.verify(firstServer, account.name, '1234'), null);
+  assert.ok(await accounts.verify(firstServer, account.name, 'abcd'));
+  for (const password of ['abc', ' '.repeat(4), 'x'.repeat(128)]) {
+    await assert.rejects(accounts.resetPassword(firstServer, account.id, password), { code: 'invalid_browser_password' });
+  }
 });
 
 test('browser passwords fit the client packet boundary and preserve Unicode', async (t) => {

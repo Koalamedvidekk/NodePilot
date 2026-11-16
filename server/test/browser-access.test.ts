@@ -108,7 +108,7 @@ async function fixture(t: TestContext, options: { missingYaml?: boolean; downloa
     authPluginJar: path.join(dependenciesRoot, 'plugins/NodePilotBrowserAuth.jar'), javaMajor: 25,
     versions: { velocity: '4.3.1-45', eaglerxserver: 'fixture', cloudflared: 'fixture' } };
   let installations = 0;
-  const dependencies = { install: async () => {
+  const dependencies = { refreshAuthCompanion: async () => ({ path: installed.authPluginJar, version: '0.1.1' }), install: async () => {
     installations += 1;
     if (options.downloadError) throw new Error('The official download failed its SHA-256 integrity check.');
     await mkdir(path.dirname(installed.bungeeGuardJar), { recursive: true });

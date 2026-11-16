@@ -241,6 +241,11 @@ separate stable UUIDs and progress. Owners can reset passwords and revoke access
 in this tab. Ordinary Java players continue using the server's existing public
 game address through the managed proxy.
 
+Browser account passwords accept **4–127 characters**, within the client's
+255-byte UTF-8 limit. Existing passwords keep working. NodePilot updates its own
+authentication companion before the gateway next starts, preserving accounts,
+gateway configuration and third-party components.
+
 Cloudflare Quick Tunnels supply temporary public addresses without requiring an
 account or port forwarding. The address changes when the tunnel restarts.
 Cloudflare describes this as a testing and development service with no uptime

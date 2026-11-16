@@ -237,7 +237,7 @@ try {
           if (method === "POST") {
             assert.deepEqual(request.postDataJSON(), {
               name: "alex",
-              password: "fixture-password-123",
+              password: "1234",
             });
             accounts = [
               {
@@ -255,7 +255,7 @@ try {
         ) {
           assert.equal(method, "POST");
           assert.deepEqual(request.postDataJSON(), {
-            password: "replacement-fixture-password",
+            password: "abcd",
           });
           resetRequests += 1;
           body = { account: accounts[0] };
@@ -349,7 +349,7 @@ try {
           .fill("alex");
         await page
           .getByLabel("Account password", { exact: true })
-          .fill("fixture-password-123");
+          .fill("1234");
         await page
           .getByRole("button", { name: "Create Account", exact: true })
           .click();
@@ -365,7 +365,7 @@ try {
           .click();
         await page
           .getByLabel("New password for np_alex", { exact: true })
-          .fill("replacement-fixture-password");
+          .fill("abcd");
         await page
           .getByRole("button", { name: "Save Password", exact: true })
           .click();
