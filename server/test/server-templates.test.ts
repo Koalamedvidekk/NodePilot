@@ -14,7 +14,7 @@ import type { MinecraftVersion, ServerRecord } from '../types.js';
 
 test('templates are isolated configuration presets with explicit software compatibility', () => {
   const templates = listServerTemplates();
-  assert.deepEqual(templates.map(item => item.id), ['smp', 'pure-vanilla', 'creative', 'hardcore']);
+  assert.deepEqual(templates.map(item => item.id), ['smp', 'optimized-smp', 'pure-vanilla', 'creative', 'hardcore']);
   assert.deepEqual(requireServerTemplate('pure-vanilla').software, ['vanilla']);
   templates[0].defaults.maxPlayers = 999;
   templates[0].software.push('forge');

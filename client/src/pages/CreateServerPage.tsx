@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
 import { CustomSelect } from '../components/CustomSelect';
-import type { JavaDiscovery, MinecraftRequirements, MinecraftVersion, ProvisionableServerSoftware, ServerTemplate, ServerTemplateSettings } from '../types';
+import { BundleSummary, TemplateAddonsPicker } from '../components/TemplateAddonsPicker';
+import type { BundlePreview, BundleSelection, JavaDiscovery, MinecraftRequirements, MinecraftVersion, ProvisionableServerSoftware, ServerTemplate, ServerTemplateSettings } from '../types';
 import { errorMessage, titleCase } from '../utils';
 
 type WizardStep = 1 | 2 | 3;
@@ -45,6 +46,12 @@ export function CreateServerPage() {
   const [templatesError, setTemplatesError] = useState<string>();
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const selectedTemplate = templates.find(item => item.id === templateId);
+  const [bundleSelections, setBundleSelections] = useState<BundleSelection[]>([]);
+  const [bundlePreview, setBundlePreview] = useState<BundlePreview>();
+  const [bundleLoading, setBundleLoading] = useState(false);
+  const [bundleError, setBundleError] = useState<string>();
+  const [previewRevision, setPreviewRevision] = useState(0);
+  const versionChosenByUser = useRef(false);
   const [versions, setVersions] = useState<MinecraftVersion[]>([]);
   const [version, setVersion] = useState('');
   const [java, setJava] = useState<JavaDiscovery>();
@@ -73,12 +80,15 @@ export function CreateServerPage() {
     setSoftware(nextEdition === 'bedrock' ? 'bedrock' : 'paper');
     setTemplateId('');
     setTemplateSettings(undefined);
+    setBundleSelections([]);
+    versionChosenByUser.current = false;
   };
 
   const selectTemplate = (id: string) => {
     const template = templates.find(item => item.id === id);
     setTemplateId(id);
     setTemplateSettings(template ? { ...template.defaults } : undefined);
+    setBundleSelections((template?.recommendedAddons ?? []).map(item => ({ source: item.source, projectId: item.projectId, name: item.name })));
     if (template && !template.software.includes(software)) setSoftware(template.defaultSoftware);
     setError(undefined);
   };
@@ -110,12 +120,32 @@ export function CreateServerPage() {
       .then((result) => {
         if (!active) return;
         setVersions(result);
-        setVersion(result.some(item => item.id === preferredVersion) ? preferredVersion : latestVersion(result));
+        setVersion(result.some(item => item.id === preferredVersion) || versionChosenByUser.current && preferredVersion ? preferredVersion : latestVersion(result));
       })
       .catch((cause) => active && setError(`Couldn’t load ${titleCase(software)} versions: ${errorMessage(cause)}`))
       .finally(() => active && setLoadingVersions(false));
     return () => { active = false; };
   }, [software, templateId]);
+
+  useEffect(() => {
+    let active = true;
+    let refresh: ReturnType<typeof setTimeout> | undefined;
+    setBundlePreview(undefined); setBundleError(undefined);
+    if (!templateId || !version || loadingVersions || !bundleSelections.length) { setBundleLoading(false); return; }
+    setBundleLoading(true);
+    const timeout = setTimeout(() => {
+      void api.previewTemplate({ templateId, software, version, templateSettings, selections: bundleSelections })
+        .then(preview => {
+          if (!active) return;
+          if (!preview.compatible && !versionChosenByUser.current && preview.versions.length) { setVersion(preview.versions[0]); return; }
+          setBundlePreview(preview);
+          if (preview.expiresAt) refresh = setTimeout(() => setPreviewRevision(value => value + 1), Math.max(1000, Date.parse(preview.expiresAt) - Date.now() - 1000));
+        })
+        .catch(cause => { if (active) setBundleError(errorMessage(cause)); })
+        .finally(() => { if (active) setBundleLoading(false); });
+    }, 300);
+    return () => { active = false; clearTimeout(timeout); clearTimeout(refresh); };
+  }, [templateId, software, version, templateSettings, bundleSelections, loadingVersions, previewRevision]);
 
   useEffect(() => {
     let active = true;
@@ -203,7 +233,8 @@ export function CreateServerPage() {
         ? 'Port must be a whole number from 1 to 65535.'
         : normalizedMemory !== undefined && (!Number.isInteger(normalizedMemory) || normalizedMemory < 256)
           ? 'Memory must be at least 256 MB.'
-          : templateError;
+          : templateError ?? (bundleSelections.length && (bundleLoading || !bundlePreview?.compatible || !bundlePreview.planId)
+            ? bundleError ?? bundlePreview?.reason ?? 'Wait for the bundle compatibility preview, or adjust your selected add-ons.' : undefined);
 
   const moveForward = () => {
     if (step === 1 && !version) {
@@ -246,6 +277,7 @@ export function CreateServerPage() {
         eulaAccepted: true,
         enablePlayit,
         ...(selectedTemplate && templateSettings ? { templateId: selectedTemplate.id, templateSettings } : {}),
+        ...(bundleSelections.length && bundlePreview?.planId ? { templatePlanId: bundlePreview.planId } : {}),
       });
       if (!server.id) throw new Error('The server was created, but NodePilot did not return its identifier.');
       navigate(`/servers/${encodeURIComponent(server.id)}`);
@@ -351,7 +383,7 @@ export function CreateServerPage() {
               <div className="field-group form-field"><span>Minecraft version</span>
                 <CustomSelect
                   value={version}
-                  onChange={(val) => setVersion(val)}
+                  onChange={(val) => { versionChosenByUser.current = true; setVersion(val); }}
                   disabled={loadingVersions}
                   placeholder={loadingVersions ? 'Loading official versions…' : versions.length === 0 ? 'No versions available' : 'Select a Minecraft version…'}
                   options={versions.map((item) => ({
@@ -361,7 +393,8 @@ export function CreateServerPage() {
                   aria-label="Minecraft version"
                 />
                 {selectedVersion?.releaseDate && <small className="input-note">Released {selectedVersion.releaseDate}</small>}
-                {selectedTemplate && <small className="input-note">{selectedTemplate.name} · stable releases from {selectedTemplate.minimumVersion}. Downloads come from the selected software's official source. No plugins or mods are bundled.</small>}
+                {selectedTemplate && <small className="input-note">{selectedTemplate.name} · stable releases from {selectedTemplate.minimumVersion}. {bundleSelections.length ? 'Included add-ons are checked against this version; customize them in Configure.' : 'No plugins or mods selected.'}</small>}
+                {!loadingVersions && version && !selectedVersion && <small className="input-note" role="alert">Minecraft {version} is not available for the selected software. Choose another release.</small>}
               </div>
             </div>
           )}
@@ -412,6 +445,10 @@ export function CreateServerPage() {
                   <button type="button" className="text-button" onClick={() => setTemplateSettings({ ...selectedTemplate.defaults })}>Reset template settings</button>
                 </fieldset>
               )}
+
+              {selectedTemplate && <TemplateAddonsPicker template={selectedTemplate} software={software} version={version} selections={bundleSelections} onChange={setBundleSelections}
+                preview={bundlePreview} loading={bundleLoading} error={bundleError} onRefresh={() => setPreviewRevision(value => value + 1)}
+                onVersionChange={value => { versionChosenByUser.current = true; setVersion(value); }} />}
 
               {isBedrock ? (
                 <section className="java-check">
@@ -542,7 +579,7 @@ export function CreateServerPage() {
                 <div><dt>Players / view distance</dt><dd>{templateSettings.maxPlayers} players · {templateSettings.viewDistance} chunks</dd></div>
                 <div><dt>World seed</dt><dd>{templateSettings.seed || 'Random'}</dd></div>
                 <div><dt>Structures / whitelist</dt><dd>{templateSettings.structures ? 'Enabled' : 'Disabled'} / {templateSettings.whitelist ? 'Enabled' : 'Disabled'}</dd></div>
-              </dl><p className="input-note">No plugins or mods are installed by these presets. Minecraft generates the world on the first normal start.</p></div>}
+              </dl><p className="input-note">{bundleSelections.length ? 'Selected add-ons are installed before the server becomes ready. ' : 'No add-ons are selected. '}Minecraft generates the world on the first normal start.</p><BundleSummary preview={bundlePreview} /></div>}
 
               {!isBedrock && !javaReady && (
                 <div className="java-downloader-card" style={{ marginBottom: '16px' }}>
@@ -629,7 +666,7 @@ export function CreateServerPage() {
 
           <div className="wizard-actions">
             {step > 1 ? <button type="button" className="button button-secondary" onClick={() => { setError(undefined); setStep((current) => (current - 1) as WizardStep); }} disabled={creating}><Icon name="arrowLeft" size={17} /> Back</button> : <Link className="button button-ghost" to="/servers">Cancel</Link>}
-            {step < 3 ? <button type="button" className="button button-primary" onClick={moveForward} disabled={loadingVersions}>{step === 1 ? 'Continue' : 'Review server'} <Icon name="chevronRight" size={17} /></button> : <button type="submit" className="button button-primary create-submit" disabled={creating || !eulaAccepted || !javaReady}>{creating ? <><span className="button-loader" /> Creating server…</> : <><Icon name="plus" size={18} /> Create server</>}</button>}
+            {step < 3 ? <button type="button" className="button button-primary" onClick={moveForward} disabled={loadingVersions}>{step === 1 ? 'Continue' : 'Review server'} <Icon name="chevronRight" size={17} /></button> : <button type="submit" className="button button-primary create-submit" disabled={creating || !eulaAccepted || !javaReady || Boolean(formError)}>{creating ? <><span className="button-loader" /> Creating server…</> : <><Icon name="plus" size={18} /> Create server</>}</button>}
           </div>
         </section>
 

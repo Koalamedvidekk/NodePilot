@@ -12,6 +12,7 @@ import { BrowserPlayersPanel } from './BrowserPlayersPanel';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServerTunnelCard } from '../components/ServerTunnelCard';
+import { TemplateInstallationPanel } from '../components/TemplateInstallationPanel';
 import type { ConsoleLine, FileEntry, Server } from '../types';
 import { errorMessage, formatBytes, formatDate, relativePath, titleCase } from '../utils';
 
@@ -732,7 +733,7 @@ function OverviewPanel({ server, onAction, onMemorySave, actionBusy }: { server:
         <div className="panel-heading"><div><h3>Runtime</h3><p>Local process controls</p></div><StatusBadge status={server.status} directoryMissing={server.directoryExists === false} /></div>
         <div className="runtime-status-art"><div className={`status-orb status-${server.status}`}><Icon name={server.status === 'running' ? 'activity' : 'server'} size={29} /></div><div><strong>{server.directoryExists === false ? 'Server files missing' : server.status === 'running' ? 'Server is online' : server.status === 'installing' ? 'Preparing server files' : 'Server is offline'}</strong><p>{server.directoryExists === false ? 'The server directory was deleted from disk.' : server.status === 'running' ? `Listening locally on port ${server.port ?? '—'}.` : server.error ?? 'Start it when you are ready.'}</p></div></div>
         <div className="lifecycle-buttons">
-          {canStart && <button className="button button-primary" type="button" onClick={() => onAction('start')} disabled={actionBusy || server.status === 'installing' || server.directoryExists === false} title={server.directoryExists === false ? 'Server directory does not exist on disk' : undefined}><Icon name="play" size={17} /> Start server</button>}
+          {canStart && <button className="button button-primary" type="button" onClick={() => onAction('start')} disabled={actionBusy || server.installState !== 'ready' || server.directoryExists === false} title={server.installState !== 'ready' ? 'Finish or retry the server installation first' : server.directoryExists === false ? 'Server directory does not exist on disk' : undefined}><Icon name="play" size={17} /> Start server</button>}
           {canStop && <button className="button button-danger" type="button" onClick={() => onAction('stop')} disabled={actionBusy}><Icon name="square" size={15} /> Stop server</button>}
           <button className="button button-secondary" type="button" onClick={() => onAction('restart')} disabled={actionBusy || server.status !== 'running'}><Icon name="refresh" size={16} /> Restart</button>
         </div>
@@ -848,7 +849,7 @@ export function ServerManagementPage() {
         <div className="server-identity"><div className="server-identity-icon"><Icon name="box" size={28} /></div><div><p className="eyebrow">{titleCase(server.software ?? server.distribution)} · {server.software === 'bedrock' || server.game === 'minecraft-bedrock' ? 'MINECRAFT BEDROCK' : 'MINECRAFT JAVA'}</p><h2>{server.name}</h2><span>Port {server.port ?? '—'} <i /> {server.version ?? 'Unknown version'}</span></div></div>
         <div className="management-header-actions"><StatusBadge status={server.status} directoryMissing={server.directoryExists === false} /><button className="button button-danger-outline" type="button" onClick={() => void remove()} disabled={deleting || actionBusy}>{deleting ? 'Deleting…' : <><Icon name="trash" size={16} /> Delete</>}</button></div>
       </div>
-      {server.directoryExists === false && (
+      {server.directoryExists === false && server.installState !== 'installing' && (
         <div className="inline-alert alert-error" role="alert">
           <Icon name="warning" size={19} />
           <div>
@@ -859,6 +860,7 @@ export function ServerManagementPage() {
       )}
       {error && <div className="inline-alert alert-error" role="alert"><Icon name="warning" size={19} /><div><strong>NodePilot couldn’t complete that action.</strong><span>{error}</span></div><button className="text-button" onClick={() => setError(undefined)}>Dismiss</button></div>}
       {server.status === 'installing' && <div className="inline-alert alert-info"><Icon name="info" size={19} /><div><strong>Your server is being prepared.</strong><span>NodePilot is downloading and configuring files. This page refreshes automatically.</span></div></div>}
+      <TemplateInstallationPanel key={server.id} serverId={server.id} />
 
       <nav className="management-tabs" aria-label="Server management">
         {tabs.map((item) => <NavLink key={item.tab} to={item.to} end={item.tab === 'overview'} className={tab === item.tab ? 'is-active' : ''}><Icon name={item.icon} size={17} /> {item.label}</NavLink>)}

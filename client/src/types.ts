@@ -169,6 +169,7 @@ export interface CreateServerInput {
   enablePlayit?: boolean;
   templateId?: string;
   templateSettings?: ServerTemplateSettings;
+  templatePlanId?: string;
 }
 
 export interface ServerTemplateSettings {
@@ -190,6 +191,23 @@ export interface ServerTemplate {
   software: ProvisionableServerSoftware[];
   minimumVersion: string;
   defaults: ServerTemplateSettings;
+  recommendedAddons: Array<{ source: 'modrinth'; projectId: string; name: string; description: string }>;
+}
+
+export interface BundleSelection { source: 'modrinth' | 'hangar'; projectId: string; name?: string }
+export interface BundlePreview {
+  compatible: boolean;
+  reason: string | null;
+  versions: string[];
+  artifacts: Array<{ source: 'modrinth' | 'hangar'; projectId: string; type: 'plugin' | 'mod'; name: string;
+    versionId: string; versionName: string; fileName: string; requiredBy: string[]; size: number; clientRequired: false }>;
+  configurationChanges: Array<{ file: string; description: string }>;
+  planId: string | null;
+  expiresAt: string | null;
+}
+export interface TemplateInstallation {
+  id: string; serverId: string; state: 'running' | 'failed' | 'cancelled' | 'succeeded'; phase: string; error: string | null;
+  completedFiles: number; totalFiles: number; downloadedBytes: number; totalBytes: number; updatedAt: string;
 }
 
 export interface UpdateServerInput {

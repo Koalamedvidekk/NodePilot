@@ -8,6 +8,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ZipFile } from 'yazl';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const temporary = await realpath(os.tmpdir());
@@ -15,6 +16,7 @@ const root = await mkdtemp(path.join(temporary, 'nodepilot-templates-api-'));
 const data = path.join(root, 'data');
 const pin = 'isolated-templates-test';
 const ui = process.argv.includes('--ui');
+const bundles = process.argv.includes('--bundles');
 let backend, browser;
 let output = '';
 const listener = net.createServer();
@@ -65,8 +67,23 @@ try {
   await cp(path.join(project, 'package.json'), path.join(root, 'package.json'));
   await cp(path.join(project, 'server/package.json'), path.join(root, 'server/package.json'));
   await symlink(path.join(project, 'node_modules'), path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  const definitions = [
+    { id: 'hXiIvTyT', name: 'EssentialsX', mod: false }, { id: 'Vebnzrzj', name: 'LuckPerms', mod: false },
+    { id: 'gvQqBUqZ', name: 'Lithium', mod: true }, { id: 'uXXizFIs', name: 'FerriteCore', mod: true },
+  ];
+  const providerFiles = {};
+  for (const definition of definitions) {
+    const zip = new ZipFile();
+    zip.addBuffer(Buffer.from(definition.mod ? JSON.stringify({ schemaVersion: 1, id: definition.name.toLowerCase(), name: definition.name, version: '1.0', environment: '*' })
+      : `name: ${definition.name}\nversion: '1.0'\nmain: test.Main\napi-version: '1.21'\n`), definition.mod ? 'fabric.mod.json' : 'plugin.yml');
+    const parts = []; zip.outputStream.on('data', part => parts.push(part));
+    const ended = new Promise((resolve, reject) => { zip.outputStream.once('end', resolve); zip.outputStream.once('error', reject); });
+    zip.end(); await ended; providerFiles[definition.id] = Buffer.concat(parts).toString('base64');
+  }
+  await writeFile(path.join(root, 'provider-fixtures.json'), JSON.stringify({ definitions, files: providerFiles }));
   await writeFile(path.join(root, 'run.mjs'), `
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { MinecraftService } from './server/dist/services/minecraft-service.js';
 import { JavaService } from './server/dist/services/java-service.js';
@@ -83,6 +100,35 @@ JavaService.prototype.list = async () => [{ path: process.execPath, major: 21, v
 JavaService.prototype.findUsable = async () => ({ installation: { path: process.execPath, major: 21 } });
 PlayitService.prototype.getStatus = async () => ({ installed: false, isManaged: false, binaryPath: null, version: null,
   isRunning: false, secretExists: false, secretPath: null, claimUrl: null });
+if (${bundles}) {
+  const data = JSON.parse(await readFile('./provider-fixtures.json', 'utf8'));
+  const nativeFetch = globalThis.fetch;
+  let failNext = false;
+  process.on('message', message => { if (message === 'test-fail-next-download') failNext = true; });
+  globalThis.fetch = async (url, options) => {
+    const target = new URL(url);
+    if (target.hostname === 'cdn.modrinth.com') {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      const bytes = Buffer.from(data.files[target.pathname.split('/')[2]], 'base64');
+      if (failNext) { failNext = false; return new Response('corrupt fixture'); }
+      return new Response(bytes, { headers: { 'content-length': String(bytes.length) } });
+    }
+    if (target.hostname === 'api.modrinth.com') {
+      if (target.pathname === '/v2/search') return Response.json({ hits: data.definitions.filter(p => p.name.toLowerCase().includes(target.searchParams.get('query').toLowerCase())).map(p => ({ project_id: p.id, title: p.name, description: 'Catalogue fixture', all_project_types: [p.mod ? 'mod' : 'plugin'], versions: ['1.21.4'], server_side: 'required', categories: [p.mod ? 'fabric' : 'paper'] })) });
+      const id = target.pathname.split('/')[3];
+      const p = data.definitions.find(item => item.id === id);
+      if (!p) return Response.json({}, { status: 404 });
+      if (target.pathname.endsWith('/version')) {
+        const bytes = Buffer.from(data.files[id], 'base64');
+        return Response.json([{ id: id + '-v1', project_id: id, name: '1.0', version_number: '1.0', version_type: 'release', date_published: '2026-11-01T00:00:00Z',
+          game_versions: ['1.21.4'], loaders: [p.mod ? 'fabric' : 'paper'], dependencies: [], files: [{ primary: true, filename: p.name + '.jar',
+          url: 'https://cdn.modrinth.com/data/' + id + '/1.0.jar', size: bytes.length, hashes: { sha512: createHash('sha512').update(bytes).digest('hex') } }] }]);
+      }
+      return Response.json({ id, title: p.name, client_side: p.mod ? 'optional' : 'unsupported', server_side: 'required' });
+    }
+    return nativeFetch(url, options);
+  };
+}
 await import('./server/dist/index.js');
 process.on('message', message => { if (message === 'test-shutdown') process.emit('SIGTERM'); });
 `);
@@ -91,7 +137,7 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
   const catalogue = await request('/minecraft/templates');
   assert.equal(catalogue.status, 200);
   const templates = catalogue.body.templates;
-  assert.deepEqual(templates.map(item => item.id), ['smp', 'pure-vanilla', 'creative', 'hardcore']);
+  assert.deepEqual(templates.map(item => item.id), ['smp', 'optimized-smp', 'pure-vanilla', 'creative', 'hardcore']);
   const versions = await request('/minecraft/versions?software=vanilla&templateId=pure-vanilla');
   assert.deepEqual(versions.body.versions.map(item => item.id), ['26.3', '1.21.4', '1.8.9']);
   assert.equal((await request('/minecraft/versions?software=paper&templateId=pure-vanilla')).status, 422);
@@ -133,6 +179,45 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
   assert.equal((await request('/servers/' + saved.id)).status, 200);
   assert.equal(parseJavaProperties(await readFile(saved.file, 'utf8'))['max-players'], '13');
   console.log('PASS each template creates a stopped server and later edits survive panel restart');
+
+  if (bundles) {
+    const previewInput = { templateId: 'smp', software: 'paper', version: '1.21.4', selections: definitions.filter(p => !p.mod).map(p => ({ source: 'modrinth', projectId: p.id })) };
+    assert.equal((await request('/minecraft/templates/preview', previewInput, false)).status, 401);
+    const preview = (await request('/minecraft/templates/preview', previewInput)).body.preview;
+    assert.equal(preview.compatible, true); assert.deepEqual(preview.versions, ['1.21.4']); assert.equal(preview.artifacts.length, 2);
+    assert.equal((await request('/minecraft/templates/preview', { ...previewInput, version: '26.3' })).body.preview.compatible, false);
+    const createInput = { ...input, name: 'Exact bundle fixture', software: 'paper', templateId: 'smp', templatePlanId: preview.planId };
+    const created = await request('/servers', createInput); assert.equal(created.status, 202);
+    const id = created.body.server.id;
+    const repeated = await request('/servers', createInput); assert.equal(repeated.status, 202); assert.equal(repeated.body.server.id, id);
+    assert.equal((await request('/servers/' + id + '/start', {})).status, 409);
+    assert.equal((await request('/servers/' + id + '/files/create-file', { parentPath: '', name: 'external.txt', content: 'x' })).status, 409);
+    assert.equal((await request('/host/updates/install', {})).status, 409);
+    const wait = async serverId => {
+      const end = Date.now() + 15000;
+      while (Date.now() < end) { const result = await request('/servers/' + serverId + '/template-installation'); if (result.body.installation.state !== 'running') return result.body.installation; await new Promise(resolve => setTimeout(resolve, 100)); }
+      throw new Error('Bundle operation did not settle');
+    };
+    assert.equal((await wait(id)).state, 'succeeded');
+    const addons = await request('/servers/' + id + '/addons'); assert.equal(addons.body.plugins.length, 2);
+    assert.ok(addons.body.plugins.every(file => file.source === 'modrinth' && file.versionId.endsWith('-v1')));
+    backend.send('test-fail-next-download');
+    const next = (await request('/minecraft/templates/preview', previewInput)).body.preview;
+    const failed = await request('/servers', { ...createInput, templatePlanId: next.planId });
+    assert.equal((await wait(failed.body.server.id)).state, 'failed');
+    assert.equal((await request('/servers/' + failed.body.server.id + '/template-installation/retry', {})).status, 200);
+    assert.equal((await wait(failed.body.server.id)).state, 'succeeded');
+    const concurrentPlan = (await request('/minecraft/templates/preview', previewInput)).body.preview;
+    const parallel = await Promise.all([request('/servers', { ...createInput, templatePlanId: concurrentPlan.planId }), request('/servers', { ...createInput, templatePlanId: concurrentPlan.planId })]);
+    assert.ok(parallel.every(result => result.status === 202));
+    assert.equal(parallel[0].body.server.id, parallel[1].body.server.id);
+    assert.equal((await wait(parallel[0].body.server.id)).state, 'succeeded');
+    const cancelledPlan = (await request('/minecraft/templates/preview', previewInput)).body.preview;
+    const cancelled = await request('/servers', { ...createInput, templatePlanId: cancelledPlan.planId });
+    assert.equal((await request('/servers/' + cancelled.body.server.id + '/template-installation/cancel', {})).body.installation.state, 'cancelled');
+    assert.equal((await request('/servers/' + cancelled.body.server.id + '/start', {})).status, 409);
+    console.log('PASS pinned background bundles, idempotent creation, maintenance exclusion and real failure/retry APIs');
+  }
 
   if (ui) {
     const require = createRequire(import.meta.url);
@@ -202,6 +287,43 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
     assert.equal(await page.locator('input[name="software"]').count(), 8);
     assert.deepEqual(errors, []);
     console.log('PASS Hardcore constraints/reset, responsive layout and unchanged Custom/Bedrock flows');
+
+    if (bundles) {
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await page.goto(base + '/servers/new');
+      await page.getByRole('radio', { name: /SMP Survival multiplayer/ }).check();
+      await page.waitForFunction(() => document.querySelector('[aria-label="Minecraft version"]')?.textContent.includes('1.21.4'));
+      await choose('Minecraft version', '26.3');
+      await page.getByRole('button', { name: /Continue/ }).click();
+      await page.getByRole('alert').filter({ hasText: /no stable/ }).waitFor();
+      assert.equal((await page.getByRole('button', { name: 'Bundle-compatible Minecraft version' }).textContent()).includes('Choose'), true);
+      await choose('Bundle-compatible Minecraft version', '1.21.4');
+      await page.getByText('2 verified downloads', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Remove LuckPerms', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Search template add-ons' }).fill('LuckPerms');
+      await page.getByRole('button', { name: 'Search', exact: true }).click();
+      await page.getByRole('button', { name: 'Add', exact: true }).click();
+      await page.getByText('2 verified downloads', { exact: true }).waitFor();
+      await page.getByRole('textbox', { name: 'Server name' }).fill('Browser bundled SMP');
+      await page.getByRole('button', { name: 'Review server' }).click();
+      await page.getByText('2 verified downloads', { exact: true }).waitFor();
+      await page.getByRole('checkbox', { name: /I accept the Minecraft EULA/ }).check();
+      const creating = page.waitForResponse(response => new URL(response.url()).pathname === '/api/servers' && response.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Create server', exact: true }).click();
+      const result = await creating; assert.equal(result.status(), 202); const server = (await result.json()).server;
+      assert.ok(result.request().postDataJSON().templatePlanId);
+      await page.waitForURL('**/servers/' + server.id);
+      const end = Date.now() + 15000;
+      while ((await request('/servers/' + server.id + '/template-installation')).body.installation.state === 'running') {
+        if (Date.now() > end) throw new Error('UI bundle never installed'); await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const installed = (await request('/servers/' + server.id + '/addons')).body;
+      assert.equal(installed.plugins.length, 2);
+      await page.getByRole('link', { name: 'Plugins', exact: true }).click();
+      await page.locator('.addon-installed-row').filter({ hasText: 'EssentialsX.jar' }).waitFor();
+      assert.deepEqual(errors, []);
+      console.log('PASS browser bundle version adaptation, explicit-version preservation, editable catalogue selection and tracked installations');
+    }
   }
 } finally {
   await browser?.close();

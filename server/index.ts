@@ -53,6 +53,9 @@ import { UpdateService } from './services/update-service.js';
 import { ServerVersionService } from './services/server-version-service.js';
 import { parseMemoryMb, validateCustomJvmArgs } from './lib/settings-helpers.js';
 import { filterTemplateVersions, listServerTemplates, requireServerTemplate, resolveServerTemplate, templateSettingsSchema } from './lib/server-templates.js';
+import { TemplateBundleRepository } from './repositories/template-bundle-repository.js';
+import { TemplateInstallationService } from './services/template-installation-service.js';
+import { bundleType } from './services/template-bundle-resolver.js';
 import type { AutoStartMode, HostDiagnostics, HostSettings, HostStartupStatus, JavaInstallation, PlayitStatus, ProvisionableServerSoftware, ServerRecord, ServerStatus, ServerTunnel } from './types.js';
 
 let config = getConfig();
@@ -73,6 +76,7 @@ const createServerSchema = z.object({
   enablePlayit: z.boolean().optional().default(false),
   templateId: z.string().min(1).max(64).optional(),
   templateSettings: templateSettingsSchema.partial().optional(),
+  templatePlanId: z.string().uuid().optional(),
 }).refine((value) => Boolean(value.software ?? value.flavor), 'Choose a server software implementation.');
 const updateServerSchema = z.object({
   name: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f\r\n]/.test(value), 'Name cannot contain control characters.').optional(),
@@ -373,12 +377,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   let worlds: WorldService;
   let addons: AddonService;
   let browserAccess: BrowserAccessService;
+  let templateInstallations: TemplateInstallationService;
+  let creationRequests = 0;
   const versionSettings = new ServerVersionRepository(database);
   const serverVersions = new ServerVersionService(
     { serversDirectory: config.serversDirectory, backupsDirectory: config.backupsDirectory },
     repository, minecraft, java,
     {
-      isProcessActive: (id: string) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(browserAccess?.ports(id)) || Boolean(browserAccess?.isBusy(id)) || Boolean(browserAccess?.hasRecoveryBlock(id)) || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasPending(id)) || Boolean(addons?.hasRecoveryBlock(id)),
+      isProcessActive: (id: string) => runtime.isProcessActive(id) || Boolean(templateInstallations?.isBlocked(id)) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(browserAccess?.ports(id)) || Boolean(browserAccess?.isBusy(id)) || Boolean(browserAccess?.hasRecoveryBlock(id)) || Boolean(worlds?.isBusy(id)) || Boolean(worlds?.hasRecoveryBlock(id)) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasPending(id)) || Boolean(addons?.hasRecoveryBlock(id)),
       versionChangeBlockedReason: (id) => browserAccess?.ports(id)
         ? 'Disable Browser Players before changing Minecraft versions so the browser gateway compatibility can be checked again.'
         : addons?.hasPending(id) || addons?.hasRecoveryBlock(id)
@@ -388,7 +394,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     () => updates.isMaintenanceActive(),
   );
   worlds = new WorldService(config, repository, new WorldRepository(database), {
-    isProcessActive: (id) => runtime.isProcessActive(id) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(browserAccess?.isBusy(id)) || Boolean(browserAccess?.hasRecoveryBlock(id)) || serverVersions.isBusy(id) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasRecoveryBlock(id)),
+    isProcessActive: (id) => runtime.isProcessActive(id) || Boolean(templateInstallations?.isBlocked(id)) || (serverMutationCounts.get(id) ?? 0) > 0 || Boolean(browserAccess?.isBusy(id)) || Boolean(browserAccess?.hasRecoveryBlock(id)) || serverVersions.isBusy(id) || Boolean(addons?.isBusy(id)) || Boolean(addons?.hasRecoveryBlock(id)),
   }, () => updates.isMaintenanceActive());
   await worlds.recover();
   addons = new AddonService(config.serversDirectory, config.backupsDirectory, database, {
@@ -396,6 +402,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     getServer: (id) => repository.require(id),
     isProcessActive: (id) => runtime.hasProcess(id),
     assertCanMutate: (id) => {
+      templateInstallations?.assertAvailable(id);
       browserAccess?.assertCanChange(id);
       if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
       worlds.assertCanStart(id);
@@ -408,10 +415,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
   });
   await addons.recover();
+  templateInstallations = new TemplateInstallationService(new TemplateBundleRepository(database), repository, minecraft, addons, config,
+    undefined, server => serverTunnels.reconcile(server.id, server.port));
+  await templateInstallations.recover();
   browserAccess = new BrowserAccessService(database, repository, java, {
     dataDirectory: config.dataDirectory, serversDirectory: config.serversDirectory,
     isProcessActive: (id) => runtime.isProcessActive(id),
     assertMaintenance: (id) => {
+      templateInstallations.assertAvailable(id);
       if (updates.isMaintenanceActive() || worlds.isBusy(id) || serverVersions.isBusy(id) || addons.isBusy(id) || addons.hasPending(id) || (serverMutationCounts.get(id) ?? 0) > 0) throw new AppError(409, 'server_maintenance_in_progress', 'Finish the current server operation before changing Browser Players.');
       worlds.assertCanStart(id);
       if (addons.hasRecoveryBlock(id)) throw new AppError(409, 'addon_recovery_required', 'Recover the interrupted add-on change first.');
@@ -423,6 +434,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   await browserAccess.recover();
   runtime.setStartGuard((id) => {
+    templateInstallations.assertAvailable(id);
     browserAccess.assertCanStart(id);
     if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'NodePilot is updating. Wait for it to restart.');
     if (serverVersions.isBusy(id)) throw new AppError(409, 'version_change_in_progress', 'This server is changing Minecraft versions. Wait until it finishes.');
@@ -454,6 +466,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const match = request.url.split('?')[0].match(/^\/api\/servers\/([0-9a-f-]{36})(\/.*)?$/i);
     if (!match) return;
     const id = match[1];
+    if (match[2]?.startsWith('/template-installation')) return;
+    if (request.method !== 'DELETE' || match[2] || !templateInstallations.canDelete(id)) templateInstallations.assertAvailable(id);
     if (match[2]?.startsWith('/browser-access')) return;
     browserAccess.assertCanStart(id);
     if (browserAccess.ports(id) && !['/start', '/stop', '/restart', '/command'].includes(match[2] ?? '')) {
@@ -548,6 +562,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.get('/api/minecraft/templates', async () => ({ templates: listServerTemplates() }));
+  app.get('/api/minecraft/templates/addons/search', async request => {
+    const input = z.object({ software: softwareSchema, version: z.string().min(1).max(64), type: z.enum(['plugin', 'mod']),
+      source: z.enum(['modrinth', 'hangar']), query: z.string().trim().min(1).max(100) }).parse(request.query);
+    if (bundleType(input.software) !== input.type) throw new AppError(422, 'bundle_type_incompatible', 'Choose compatible server software for this add-on type.');
+    return { results: await addons.search(input, input.type, input.source, input.query) };
+  });
+  app.post('/api/minecraft/templates/preview', async request => {
+    const input = z.object({ templateId: z.string().min(1).max(64), software: softwareSchema,
+      version: z.string().min(1).max(64).regex(/^\d+\.\d+(?:\.\d+)?$/), templateSettings: templateSettingsSchema.partial().optional(),
+      selections: z.array(z.object({ source: z.enum(['modrinth', 'hangar']), projectId: z.string().min(3).max(162) }).strict()).max(32) }).strict().parse(request.body);
+    return { preview: await templateInstallations.preview(input) };
+  });
+  app.get('/api/servers/:id/template-installation', async request => {
+    const { id } = serverParamsSchema.parse(request.params); requireServer(repository, id);
+    return { installation: templateInstallations.status(id) };
+  });
+  app.post('/api/servers/:id/template-installation/retry', async request => {
+    const { id } = serverParamsSchema.parse(request.params); requireServer(repository, id);
+    if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'Wait for NodePilot to finish updating.');
+    return { installation: await templateInstallations.retry(id) };
+  });
+  app.post('/api/servers/:id/template-installation/cancel', async request => {
+    const { id } = serverParamsSchema.parse(request.params); requireServer(repository, id);
+    return { installation: await templateInstallations.cancel(id) };
+  });
   app.get('/api/minecraft/versions', async (request) => {
     const input = versionQuerySchema.parse(request.query);
     const software = selectedSoftware(input);
@@ -675,9 +714,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
   app.post('/api/servers', async (request, reply) => {
+    if (updates.isMaintenanceActive()) throw new AppError(409, 'update_restarting', 'Wait for NodePilot to finish updating.');
+    creationRequests += 1;
+    try {
     const input = createServerSchema.parse(request.body);
     const software = selectedSoftware(input);
     const template = resolveServerTemplate(input.templateId, software, input.version, input.templateSettings);
+    if (input.templatePlanId && !input.templateId) throw new AppError(400, 'template_required', 'A bundle preview requires its template identity.');
+    const plan = input.templatePlanId ? templateInstallations.validatePlan(input.templatePlanId,
+      { templateId: input.templateId!, software, version: input.version, templateSettings: input.templateSettings }) : null;
+    if (plan?.serverId) return reply.code(202).send({ server: serializeServer(requireServer(repository, plan.serverId)), installation: templateInstallations.status(plan.serverId) });
     await minecraft.assertVersionAvailable(software, input.version);
     const requiredJavaMajor = await minecraft.getRequiredJavaMajor(software, input.version);
     let usableJava: { installation: { path: string }; warning?: string } | null = null;
@@ -702,7 +748,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .slice(0, 48) || 'minecraft-server'}-${id.slice(0, 8)}`;
     let created: ServerRecord | undefined;
     try {
-      created = repository.create({
+      const createRecord = () => repository.create({
         id,
         machineId: 'local',
         name: input.name,
@@ -716,6 +762,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         memoryMb: input.memoryMb,
         eulaAccepted: input.eulaAccepted,
       });
+      if (plan) {
+        created = database.transaction(() => {
+          const existing = new TemplateBundleRepository(database).plan(plan.id);
+          if (existing?.serverId) return requireServer(repository, existing.serverId);
+          const server = createRecord();
+          const updated = usableJava ? repository.update(id, { javaPath: usableJava.installation.path }) : server;
+          templateInstallations.create(updated, plan, input.enablePlayit);
+          return updated;
+        })();
+        templateInstallations.begin(created.id);
+        return reply.code(202).send({ server: serializeServer(created), installation: templateInstallations.status(created.id), javaWarning: usableJava?.warning });
+      }
+      created = createRecord();
       if (usableJava) {
         created = repository.update(id, { javaPath: usableJava.installation.path });
       }
@@ -736,6 +795,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (created) repository.markInstallFailed(id, errorMessage(error));
       throw error;
     }
+    } finally { creationRequests -= 1; }
   });
   app.patch('/api/servers/:id', async (request) => {
     const { id } = serverParamsSchema.parse(request.params);
@@ -773,6 +833,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         throw new AppError(409, 'server_active', 'Stop the server before deleting it.');
       }
     }
+    await templateInstallations.discard(id);
     try {
       const target = await resolveManagedServerRoot(config.serversDirectory, server.directory);
       await rm(target, { recursive: true, force: true, maxRetries: 2 });
@@ -1141,6 +1202,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post('/api/host/updates/install', async (_request, reply) => {
+    if (creationRequests || templateInstallations.anyBusy()) throw new AppError(409, 'template_installation_busy', 'Finish or cancel server installations before updating NodePilot.');
     if (browserAccess.anyBusy()) throw new AppError(409, 'browser_operation_in_progress', 'Wait for Browser Players setup to finish before updating NodePilot.');
     if (addons.anyBusy()) throw new AppError(409, 'addon_change_in_progress', 'Wait for add-on changes to finish before updating NodePilot.');
     if (worlds.anyBusy()) throw new AppError(409, 'world_operation_in_progress', 'Wait for world operations to finish before updating NodePilot.');
@@ -1699,6 +1761,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
   app.addHook('onClose', async () => {
+    await templateInstallations.stop();
     await browserAccess.stop();
     updates.stop();
     autoSleep.stop();

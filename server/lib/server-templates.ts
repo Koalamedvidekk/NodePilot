@@ -23,6 +23,7 @@ export interface ServerTemplate {
   software: ProvisionableServerSoftware[];
   minimumVersion: string;
   defaults: ServerTemplateSettings;
+  recommendedAddons: Array<{ source: 'modrinth'; projectId: string; name: string; description: string }>;
 }
 export interface ResolvedServerTemplate {
   id: string;
@@ -36,15 +37,25 @@ const defaults: ServerTemplateSettings = { gameMode: 'survival', difficulty: 'no
 
 const templates: ServerTemplate[] = [
   { id: 'smp', name: 'SMP', description: 'Survival multiplayer on Paper, ready for friends and optional plugins.',
-    defaultSoftware: 'paper', software: ['paper', 'purpur'], minimumVersion: '1.8', defaults: { ...defaults } },
+    defaultSoftware: 'paper', software: ['paper', 'purpur'], minimumVersion: '1.8', defaults: { ...defaults },
+    recommendedAddons: [
+      { source: 'modrinth', projectId: 'hXiIvTyT', name: 'EssentialsX', description: 'Homes, private messages and teleport requests.' },
+      { source: 'modrinth', projectId: 'Vebnzrzj', name: 'LuckPerms', description: 'Local permissions and rank management.' },
+    ] },
+  { id: 'optimized-smp', name: 'Optimized SMP', description: 'Survival with server-side performance mods. Players can use an unmodified client.',
+    defaultSoftware: 'fabric', software: ['fabric', 'neoforge'], minimumVersion: '1.16.5', defaults: { ...defaults },
+    recommendedAddons: [
+      { source: 'modrinth', projectId: 'gvQqBUqZ', name: 'Lithium', description: 'Server tick and game logic optimizations.' },
+      { source: 'modrinth', projectId: 'uXXizFIs', name: 'FerriteCore', description: 'Memory usage optimizations.' },
+    ] },
   { id: 'pure-vanilla', name: 'Pure Vanilla', description: 'The official Mojang server with classic survival settings. No plugins or mods.',
-    defaultSoftware: 'vanilla', software: ['vanilla'], minimumVersion: '1.8', defaults: { ...defaults, difficulty: 'easy' } },
+    defaultSoftware: 'vanilla', software: ['vanilla'], minimumVersion: '1.8', defaults: { ...defaults, difficulty: 'easy' }, recommendedAddons: [] },
   { id: 'creative', name: 'Creative', description: 'A peaceful building world with Creative mode and structures enabled.',
     defaultSoftware: 'vanilla', software: ['vanilla', 'paper', 'purpur'], minimumVersion: '1.8',
-    defaults: { ...defaults, gameMode: 'creative', difficulty: 'peaceful' } },
+    defaults: { ...defaults, gameMode: 'creative', difficulty: 'peaceful' }, recommendedAddons: [] },
   { id: 'hardcore', name: 'Hardcore', description: 'One-life survival locked to Hard difficulty. Death has permanent consequences.',
     defaultSoftware: 'vanilla', software: ['vanilla', 'paper', 'purpur'], minimumVersion: '1.8',
-    defaults: { ...defaults, hardcore: true, difficulty: 'hard' } },
+    defaults: { ...defaults, hardcore: true, difficulty: 'hard' }, recommendedAddons: [] },
 ];
 
 /** Return independent copies so a caller cannot modify another user's preset. */

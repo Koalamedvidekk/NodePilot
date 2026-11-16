@@ -40,6 +40,19 @@ export function openDatabase(databasePath: string): SqliteDatabase {
 
     CREATE INDEX IF NOT EXISTS servers_status_idx ON servers(status);
 
+    CREATE TABLE IF NOT EXISTS template_bundle_plans (
+      id TEXT PRIMARY KEY,
+      payload TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      server_id TEXT REFERENCES servers(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS template_installations (
+      server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+      id TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS metadata_cache (
       cache_key TEXT PRIMARY KEY,
       payload TEXT NOT NULL,

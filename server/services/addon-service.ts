@@ -99,7 +99,7 @@ type HangarProject = {
 };
 type HangarVersion = {
   name?: string;
-  downloads?: { PAPER?: { downloadUrl?: string | null; externalUrl?: string | null; fileInfo?: { size?: number; hashes?: { sha256?: string; sha1?: string } } } };
+  downloads?: { PAPER?: { downloadUrl?: string | null; externalUrl?: string | null; fileInfo?: { size?: number; sizeBytes?: number; sha256Hash?: string; hashes?: { sha256?: string; sha1?: string } } } };
   platformDependencies?: { PAPER?: string[] };
   pluginDependencies?: { PAPER?: Array<{ projectId?: number | null; name?: string; required?: boolean }> };
   channel?: { name?: string };
@@ -165,12 +165,12 @@ export function addonCompatibility(type: AddonType, server: Pick<ServerRecord, '
   return { compatible: true };
 }
 
-function assertTypeSupported(type: AddonType, server: ServerRecord): void {
+function assertTypeSupported(type: AddonType, server: Pick<ServerRecord, 'software' | 'version'>): void {
   const message = requiredSoftwareForType(type, server.software);
   if (message) throw new AppError(422, 'addon_type_unsupported', message);
 }
 
-function assertHangarCompatible(server: ServerRecord): void {
+function assertHangarCompatible(server: Pick<ServerRecord, 'software' | 'version'>): void {
   if (!['paper', 'purpur'].includes(server.software)) {
     throw new AppError(422, 'catalog_unsupported', 'Hangar publishes Paper plugins. Use Modrinth or upload a verified Bukkit plugin for a Spigot server.');
   }
@@ -198,7 +198,7 @@ async function safeFetch(url: string, allowedHosts: Set<string>, init: RequestIn
       const response = await fetch(current, {
         ...init,
         redirect: 'manual',
-        signal: controller.signal,
+        signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
         headers: { Accept: 'application/json, application/java-archive;q=0.9, */*;q=0.1', 'User-Agent': 'NodePilot/0.1 (local game server manager)', ...init.headers },
       });
       if (response.status >= 300 && response.status < 400) {
@@ -215,7 +215,7 @@ async function safeFetch(url: string, allowedHosts: Set<string>, init: RequestIn
   throw new AppError(502, 'addon_download_redirect_failed', 'The add-on source redirected too many times.');
 }
 
-async function readJson<T>(url: string, hosts: Set<string>): Promise<T> {
+export async function readAddonJson<T>(url: string, hosts: Set<string>): Promise<T> {
   let response: Response;
   try {
     response = await safeFetch(url, hosts);
@@ -237,13 +237,16 @@ async function readJson<T>(url: string, hosts: Set<string>): Promise<T> {
   } finally{clearTimeout(timer);stream.destroy();}
 }
 
-async function downloadToFile(
+const readJson = readAddonJson;
+
+export async function downloadToFile(
   url: string,
   destination: string,
   checksum?: { algorithm: 'sha512' | 'sha256' | 'sha1'; value?: string },
+  options: { signal?: AbortSignal; onProgress?: (bytes: number, total: number | null) => void } = {},
 ): Promise<void> {
   const hosts = new Set(['cdn.modrinth.com', 'api.modrinth.com', 'hangar.papermc.io', 'hangarcdn.papermc.io']);
-  const response = await safeFetch(url, hosts, { headers: { Accept: 'application/java-archive, application/octet-stream;q=0.9' } });
+  const response = await safeFetch(url, hosts, { signal: options.signal, headers: { Accept: 'application/java-archive, application/octet-stream;q=0.9' } });
   if (!response.ok || !response.body) throw new AppError(502, 'addon_download_failed', `The add-on download returned HTTP ${response.status}.`);
   const contentLength = Number(response.headers.get('content-length') ?? '0');
   if (Number.isFinite(contentLength) && contentLength > DOWNLOAD_LIMIT) throw new AppError(413, 'addon_too_large', 'The add-on is larger than NodePilot’s 256 MB safety limit.');
@@ -255,12 +258,13 @@ async function downloadToFile(
       if (bytes > DOWNLOAD_LIMIT) callback(new AppError(413, 'addon_too_large', 'The add-on is larger than NodePilot’s 256 MB safety limit.'));
       else {
         hash?.update(chunk);
+        options.onProgress?.(bytes, contentLength || null);
         callback(null, chunk);
       }
     },
   });
   try {
-    await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination, { flags: 'wx' }),{signal:AbortSignal.timeout(5*60_000)});
+    await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination, { flags: 'wx' }),{signal:AbortSignal.any([AbortSignal.timeout(5*60_000), ...(options.signal ? [options.signal] : [])])});
     if (!bytes) throw new AppError(502, 'addon_download_empty', 'The add-on download was empty.');
     if (checksum?.value && hash?.digest('hex').toLowerCase() !== checksum.value.toLowerCase()) {
       throw new AppError(502, 'addon_checksum_failed', 'The downloaded add-on did not match the publisher checksum.');
@@ -272,8 +276,8 @@ async function downloadToFile(
   }
 }
 
-function modrinthLoader(type: AddonType, server: ServerRecord): string {
-  if (type === 'plugin') return server.software === 'spigot' ? 'spigot' : server.software === 'purpur' ? 'purpur' : 'paper';
+function modrinthLoader(type: AddonType, server: Pick<ServerRecord, 'software' | 'version'>): string {
+  if (type === 'plugin') return server.software === 'spigot' ? 'spigot' : 'paper';
   return server.software;
 }
 
@@ -301,6 +305,8 @@ export class AddonService {
   hasPending(id:string):boolean{return this.changes.hasPending(id);}
   hasRecoveryBlock(id:string):boolean{return this.changes.hasRecoveryBlock(id);}
   applyPending(server:ServerRecord):Promise<void>{return this.changes.applyPending(server);}
+  installFreshBundle(server: ServerRecord, artifacts: Array<{ path: string; type: AddonType; fileName: string; source: AddonSource; projectId: string; versionId: string }>): Promise<void> { return this.changes.installFreshBundle(server, artifacts); }
+  discardFreshBundle(server: ServerRecord): Promise<void> { return this.changes.discardFreshBundle(server); }
   recover():Promise<void>{return this.changes.recover();}
   cancelPending(server:ServerRecord,id:string):Promise<void>{return this.changes.cancelPending(server,id);}
   discardForDeletedServer(server:ServerRecord):Promise<void>{return this.changes.discardForDeletedServer(server);}
@@ -380,7 +386,7 @@ export class AddonService {
     return { plugins, mods, pendingChanges:this.changes.list(server.id),pendingError:this.changes.pendingError(server.id),capabilities: { plugins: !pluginMessage, mods: !modMessage, pluginMessage, modMessage,...this.changes.capabilities(server) } };
   }
 
-  async search(server: ServerRecord, type: AddonType, source: 'modrinth' | 'hangar', query: string): Promise<AddonCatalogResult[]> {
+  async search(server: Pick<ServerRecord, 'software' | 'version'>, type: AddonType, source: 'modrinth' | 'hangar', query: string): Promise<AddonCatalogResult[]> {
     assertTypeSupported(type, server);
     const normalizedQuery = query.trim();
     if (!normalizedQuery || normalizedQuery.length > 100) throw new AppError(400, 'invalid_addon_query', 'Enter an add-on search of up to 100 characters.');
@@ -504,7 +510,8 @@ export class AddonService {
     const result=await this.hangarVersion(server,projectId);
     const staging=await this.changes.stageDirectory();const stagedPath=path.join(staging,result.fileName);
     try{
-      const hashes=result.version.downloads?.PAPER?.fileInfo?.hashes;
+      const info=result.version.downloads?.PAPER?.fileInfo;
+      const hashes={...info?.hashes,...(info?.sha256Hash?{sha256:info.sha256Hash}:{})};
       const checksum=hashes?.sha256?{algorithm:'sha256' as const,value:hashes.sha256}:hashes?.sha1?{algorithm:'sha1' as const,value:hashes.sha1}:undefined;
       await downloadToFile(result.downloadUrl,stagedPath,checksum);
       return await this.deploy(server,'plugin',stagedPath,'hangar',projectId,result.version.name,originalFileName);

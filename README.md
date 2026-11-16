@@ -17,8 +17,10 @@ mandatory telemetry required.
   publisher checksums where available, creates the server directory, and writes a safe starter
   configuration.
 - Requires explicit Minecraft EULA acceptance for every new server.
-- Includes SMP, Pure Vanilla, Creative and Hardcore creation templates with selectable
-  Minecraft versions and customizable gameplay settings. [Using templates](docs/server-templates.md).
+- Includes SMP, Optimized SMP, Pure Vanilla, Creative and Hardcore creation templates
+  with selectable Minecraft versions and editable plugin/mod bundles. Exact add-on
+  versions are previewed, verified and installed before the server becomes ready.
+  [Using templates](docs/server-templates.md).
 - Starts, stops, restarts, and deletes servers without shell interpolation.
 - Lets you change a stopped server's maximum Java heap from its management page.
   NodePilot starts the JVM with a smaller heap (512 MB to 1 GB, depending on the

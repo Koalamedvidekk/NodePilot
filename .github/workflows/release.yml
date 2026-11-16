@@ -36,6 +36,8 @@ jobs:
         run: npx tsx --test server/test/import-service.test.ts
       - name: Test Playit linking and agent repair on Windows
         run: npx tsx --test server/test/playit-link.test.ts
+      - name: Test template bundles, rollback and recovery on Windows
+        run: npx tsx --test server/test/server-templates.test.ts server/test/template-bundles.test.ts
       - name: Test browser accounts, setup, routing and recovery on Windows
         run: npx tsx --test server/test/browser-accounts.test.ts server/test/browser-access.test.ts server/test/browser-dependencies.test.ts server/test/browser-wake.test.ts
       - name: Build and verify the compiled APIs
@@ -46,7 +48,7 @@ jobs:
           node scripts/test-addon-queue-api.mjs
           node scripts/test-import-api.mjs
           node scripts/test-browser-access-api.mjs
-          node scripts/test-server-templates.mjs
+          node scripts/test-server-templates.mjs --bundles
 
   release:
     name: Test, package, and publish
@@ -115,7 +117,7 @@ jobs:
           node scripts/test-wake-progress-ui.mjs
           node scripts/test-playit-link.mjs
           node scripts/test-browser-players-ui.mjs
-          node scripts/test-server-templates.mjs --ui
+          node scripts/test-server-templates.mjs --bundles --ui
 
       - name: Create the verified updater package
         id: package

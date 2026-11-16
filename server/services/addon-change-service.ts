@@ -33,7 +33,7 @@ async function hashFile(file:string):Promise<string>{
 async function syncFile(file:string):Promise<void>{const handle=await open(file,process.platform==='win32'?'r+':'r');try{await handle.sync();}finally{await handle.close();}}
 
 /** A configured storage root may be an alias; paths beneath it may never be links. */
-async function safePath(root:string,relative:string,missing=false):Promise<string>{
+export async function safeAddonStoragePath(root:string,relative:string,missing=false):Promise<string>{
   if(!relative||relative.startsWith('/')||/^[a-z]:/i.test(relative)||relative.includes('\\')||/[\x00-\x1f\x7f]/.test(relative)||relative.split('/').some(part=>!part||part==='.'||part==='..'))throw new AppError(409,'unsafe_addon_path','An add-on path is invalid.');
   const base=await realpath(root);let result=base;
   for(const part of relative.split('/')){
@@ -43,6 +43,7 @@ async function safePath(root:string,relative:string,missing=false):Promise<strin
   }
   if(!isInside(base,result)||result===base)throw new AppError(409,'unsafe_addon_path','An add-on path escapes its storage root.');return result;
 }
+const safePath = safeAddonStoragePath;
 
 /** Persistent stopped-before-launch changes. Running JVM files are never touched. */
 export class AddonChangeService {
@@ -51,6 +52,7 @@ export class AddonChangeService {
   private readonly busy=new Set<string>();
   private readonly tasks=new Set<Promise<unknown>>();
   private stopping=false;
+  private readonly freshInstallations = new Set<string>();
   private readonly dataDirectory:string;
   constructor(private readonly serversDirectory:string,private readonly backupsDirectory:string,private readonly database:SqliteDatabase,private readonly options:AddonChangeOptions={}){
     this.pending=new AddonPendingRepository(database);this.servers=new ServerRepository(database);
@@ -86,6 +88,30 @@ export class AddonChangeService {
     const current=this.current(server);this.assertMutable(current);return this.owned(server.id,()=>work(current));
   }
   async stop():Promise<void>{this.stopping=true;await Promise.allSettled([...this.tasks]);}
+  async installFreshBundle(server: ServerRecord, artifacts: Array<{ path: string; type: AddonType; fileName: string; source: AddonSource; projectId: string; versionId: string }>): Promise<void> {
+    const current = this.current(server);
+    if (this.stopping || current.installState !== 'installing' || current.status !== 'installing' || this.options.isProcessActive?.(server.id) || this.hasPending(server.id) || this.hasRecoveryBlock(server.id)) {
+      throw new AppError(409, 'bundle_installation_conflict', 'The new server is not exclusively available for its template installation.');
+    }
+    await this.owned(server.id, async () => {
+      this.freshInstallations.add(server.id);
+      try {
+        for (const artifact of artifacts) await this.submit(current, artifact.type, artifact.path, artifact.fileName, artifact.source, artifact.projectId, artifact.versionId);
+        await this.applyLocked(current);
+      } finally { this.freshInstallations.delete(server.id); }
+    });
+  }
+  async discardFreshBundle(server: ServerRecord): Promise<void> {
+    if (server.installState === 'ready' || this.options.isProcessActive?.(server.id)) throw new AppError(409, 'bundle_installation_conflict', 'Only an unfinished new installation can discard staged bundle changes.');
+    await this.owned(server.id, async () => {
+      const journal = this.pending.journal(server.id);
+      if (journal) await this.rollback(server, journal);
+      for (const change of this.pending.list(server.id)) {
+        if (change.artifactHash) await rm(await this.storage('artifacts/' + change.id + '.jar'), { force: true });
+        this.pending.remove(server.id, change.id);
+      }
+    });
+  }
   private async storage(relative:string,createParent=false):Promise<string>{
     await mkdir(this.dataDirectory,{recursive:true});
     const root=await safePath(this.dataDirectory,'addon-changes',true);await mkdir(root,{recursive:true,mode:0o700});
@@ -118,7 +144,8 @@ export class AddonChangeService {
   }
   private assertUnchanged(server:ServerRecord,latest:ServerRecord):void{
     if(server.software!==latest.software||server.version!==latest.version||server.directory!==latest.directory)throw new AppError(409,'addon_server_changed','The server software or Minecraft version changed. Refresh and select a compatible add-on again.');
-    if(['starting','stopping','installing'].includes(latest.status)||latest.installState!=='ready')throw new AppError(409,'server_changing_state','Wait until the server finishes changing state before adding this change.');
+    const fresh = this.freshInstallations.has(latest.id) && latest.installState === 'installing' && latest.status === 'installing';
+    if(!fresh && (['starting','stopping','installing'].includes(latest.status)||latest.installState!=='ready'))throw new AppError(409,'server_changing_state','Wait until the server finishes changing state before adding this change.');
   }
   private rejectOverlap(serverId:string,type:AddonType,names:string[],projectId?:string,source?:AddonSource):void{
     const conflict=this.pending.list(serverId).find(change=>change.type===type&&(names.some(name=>[change.fileName,change.originalFileName].filter(Boolean).some(other=>key(type,other!)===key(type,name)))||projectId&&change.projectId===projectId&&change.source===source));
@@ -132,6 +159,7 @@ export class AddonChangeService {
     if(!compatibility.compatible)throw new AppError(422,'addon_incompatible',compatibility.message??'This add-on is not compatible with this server.');
     const artifactHash=await hashFile(stagedPath);
     const target=await this.target(latest,type,fileName);
+    if (this.freshInstallations.has(latest.id) && target.hash !== null) throw new AppError(409, 'bundle_existing_addon', 'A file already occupies this template add-on name. NodePilot refused to replace it.');
     const original=originalFileName?await this.target(latest,type,originalFileName):null;
     if(original&&original.hash===null)throw new AppError(409,'addon_changed','The installed add-on disappeared while its update was downloading. Refresh before retrying.');
     this.rejectOverlap(latest.id,type,[target.fileName,...(original?[original.fileName]:[])],projectId,source);
@@ -147,7 +175,7 @@ export class AddonChangeService {
       if(await hashFile(artifact)!==artifactHash)throw new AppError(409,'addon_staged_file_changed','The uploaded JAR changed while it was being staged. Retry the upload.');
       this.pending.save(change);
     }catch(error){await rm(artifact,{force:true}).catch(()=>undefined);throw error;}
-    const queued=active(latest)||Boolean(this.options.isProcessActive?.(latest.id))||this.pending.list(latest.id).length>1;
+    const queued=this.freshInstallations.has(latest.id)||active(latest)||Boolean(this.options.isProcessActive?.(latest.id))||this.pending.list(latest.id).length>1;
     const details=await lstat(artifact);
     const addon:AddonRecord={type,fileName:change.fileName,size:details.size,modifiedAt:details.mtime.toISOString(),source,projectId,versionId,
       metadata:{name:metadata.name,version:metadata.version,software:metadata.software,apiVersion:metadata.apiVersion,loader:metadata.loader},compatible:true};
@@ -193,6 +221,7 @@ export class AddonChangeService {
     await this.owned(server.id,async()=>{await this.applyLocked(this.current(server));});
   }
   private assertStopped(server:ServerRecord):void{
+    if(this.freshInstallations.has(server.id) && server.installState === 'installing' && server.status === 'installing' && !this.options.isProcessActive?.(server.id)) return;
     if(['running','stopping','installing'].includes(server.status)||this.options.isProcessActive?.(server.id))throw new AppError(409,'server_active','Queued add-ons can only be applied before the Minecraft process starts.');
     if(server.installState!=='ready')throw new AppError(409,'server_not_ready','Repair the server installation before applying queued add-ons.');
   }

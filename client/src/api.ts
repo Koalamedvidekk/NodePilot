@@ -12,6 +12,10 @@ import type {
   ServerVersionStatus,
   Server,
   ServerTemplate,
+  ProvisionableServerSoftware,
+  BundleSelection,
+  BundlePreview,
+  TemplateInstallation,
   ServerProperties,
   SystemMetrics,
   UpdateServerInput,
@@ -235,6 +239,19 @@ export const api = {
   async minecraftTemplates(): Promise<ServerTemplate[]> {
     return unwrap(await request<{ templates: ServerTemplate[] }>('/minecraft/templates')).templates;
   },
+  async previewTemplate(input: { templateId: string; software: ProvisionableServerSoftware; version: string; templateSettings?: import('./types').ServerTemplateSettings; selections: BundleSelection[] }): Promise<BundlePreview> {
+    const body = { ...input, selections: input.selections.map(({ source, projectId }) => ({ source, projectId })) };
+    return unwrap(await request<{ preview: BundlePreview }>('/minecraft/templates/preview', { method: 'POST', body: JSON.stringify(body) })).preview;
+  },
+  async searchTemplateAddons(input: { software: string; version: string; type: 'plugin' | 'mod'; source: 'modrinth' | 'hangar'; query: string }): Promise<AddonCatalogResult[]> {
+    return unwrap(await request<{ results: AddonCatalogResult[] }>('/minecraft/templates/addons/search?' + new URLSearchParams(input))).results;
+  },
+  async templateInstallation(id: string): Promise<TemplateInstallation | null> {
+    return unwrap(await request<{ installation: TemplateInstallation | null }>(`/servers/${encodeURIComponent(id)}/template-installation`)).installation;
+  },
+  async templateInstallationAction(id: string, action: 'retry' | 'cancel'): Promise<TemplateInstallation> {
+    return unwrap(await request<{ installation: TemplateInstallation }>(`/servers/${encodeURIComponent(id)}/template-installation/${action}`, { method: 'POST' })).installation;
+  },
 
   async minecraftVersions(software: ServerSoftware | string, templateId?: string): Promise<MinecraftVersion[]> {
     const query = new URLSearchParams({ software });
@@ -362,6 +379,7 @@ export const api = {
           enablePlayit: input.enablePlayit,
           templateId: input.templateId,
           templateSettings: input.templateSettings,
+          templatePlanId: input.templatePlanId,
         }),
       }),
     );

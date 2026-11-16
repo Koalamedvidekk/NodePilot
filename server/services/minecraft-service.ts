@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
@@ -52,6 +53,7 @@ const METADATA_CACHE_MS = 10 * 60 * 1000;
 const PAPER_METADATA_CONCURRENCY = 5;
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const INSTALLER_TIMEOUT_MS = 15 * 60 * 1000;
+const installationSignal = new AsyncLocalStorage<AbortSignal | undefined>();
 
 const DEFAULT_FALLBACK_BEDROCK_VERSIONS = [
   '1.26.52', '1.26.51', '1.26.45', '1.26.44', '1.26.43', '1.26.42', '1.26.40',
@@ -257,12 +259,13 @@ async function downloadFile(
     throw new AppError(502, 'download_checksum_missing', 'The upstream service did not provide a checksum for this server file.');
   }
   const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, ...(installationSignal.getStore() ? [installationSignal.getStore()!] : [])]);
   const downloadTimeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   downloadTimeout.unref();
   let response: Response;
   try {
     response = await trustedFetch(url, {
-      signal: controller.signal,
+      signal,
       headers: { Accept: 'application/java-archive, application/octet-stream;q=0.9' },
     });
   } catch (error) {
@@ -301,7 +304,7 @@ async function downloadFile(
   });
 
   try {
-    await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(partialPath, { flags: 'wx' }));
+    await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(partialPath, { flags: 'wx' }), { signal });
     if (bytes === 0) throw new AppError(502, 'download_empty', 'The downloaded server file was empty.');
     if (expectedSize && Number.isSafeInteger(expectedSize) && bytes !== expectedSize) {
       throw new AppError(502, 'download_size_mismatch', 'The downloaded server file did not match its metadata size.');
@@ -361,6 +364,8 @@ function installerJarName(software: 'fabric' | 'quilt' | 'forge' | 'neoforge' | 
 }
 
 async function runJavaInstaller(javaPath: string, args: string[], cwd: string, label: string): Promise<void> {
+  const signal = installationSignal.getStore();
+  signal?.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
     let output = '';
     let settled = false;
@@ -368,8 +373,10 @@ async function runJavaInstaller(javaPath: string, args: string[], cwd: string, l
     const settle = (callback: () => void) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener('abort', abort);
       callback();
     };
+    const abort = () => { child?.kill(); };
     try {
       child = spawn(javaPath, args, {
         cwd,
@@ -388,6 +395,8 @@ async function runJavaInstaller(javaPath: string, args: string[], cwd: string, l
     };
     child.stdout?.on('data', append);
     child.stderr?.on('data', append);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     const timeout = setTimeout(() => {
       child.kill();
       settle(() => reject(new AppError(504, 'installer_timeout', label + ' did not finish within 15 minutes.')));
@@ -399,6 +408,7 @@ async function runJavaInstaller(javaPath: string, args: string[], cwd: string, l
     });
     child.once('close', (code) => {
       clearTimeout(timeout);
+      if (signal?.aborted) { settle(() => reject(new AppError(409, 'installer_cancelled', label + ' was cancelled.'))); return; }
       if (code === 0) {
         settle(resolve);
         return;
@@ -552,7 +562,11 @@ export class MinecraftService {
   }
 
   /** Install only trusted runtime files into an empty caller-controlled directory. */
-  async stageRuntime(server: ServerRecord, directory: string): Promise<InstalledServerRuntime> {
+  async stageRuntime(server: ServerRecord, directory: string, signal?: AbortSignal): Promise<InstalledServerRuntime> {
+    signal?.throwIfAborted();
+    return installationSignal.run(signal, () => this.stageRuntimeFiles(server, directory));
+  }
+  private async stageRuntimeFiles(server: ServerRecord, directory: string): Promise<InstalledServerRuntime> {
     const metadata = await lstat(directory);
     if (!metadata.isDirectory() || metadata.isSymbolicLink() || (await readdir(directory)).length !== 0) {
       throw new AppError(409, 'unsafe_runtime_staging', 'A Minecraft runtime must be staged in a new, empty directory.');
@@ -853,7 +867,7 @@ export class MinecraftService {
     return sortVersionsDescending(Object.keys(manifest));
   }
 
-  private async writeStarterConfiguration(server: ServerRecord, directory: string, template?: ResolvedServerTemplate): Promise<void> {
+  async writeStarterConfiguration(server: ServerRecord, directory: string, template?: ResolvedServerTemplate): Promise<void> {
     if (server.software === 'bedrock') {
       const propertiesPath = path.join(directory, 'server.properties');
       let content = '';

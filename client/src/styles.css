@@ -256,6 +256,18 @@ svg { display: block; flex: 0 0 auto; }
 .template-toggles input { accent-color: var(--accent); }
 .template-review { padding: 18px; margin: 20px 0; border: 1px solid var(--line); border-radius: 10px; background: rgba(123,101,255,.04); }
 .template-review > strong { font-size: 13px; }
+.bundle-search { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.bundle-search input { flex: 1 1 180px; min-width: 0; }
+.bundle-search .custom-select-container { flex: 0 1 140px; }
+.bundle-selections, .bundle-results, .bundle-summary ul { margin: 12px 0; padding: 0; list-style: none; }
+.bundle-selections li, .bundle-results li, .bundle-summary li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.bundle-picker strong, .bundle-summary strong { font-size: 12px; }
+.bundle-picker small, .bundle-summary small { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.bundle-results { max-height: 320px; overflow-y: auto; }
+.bundle-results li > span, .bundle-summary li > span { min-width: 0; overflow-wrap: anywhere; }
+.bundle-installation { padding: 20px; margin: 16px 0; }
+.bundle-installation progress { width: 100%; accent-color: var(--accent); }
+.bundle-summary { margin-top: 16px; }
 .template-review dd { overflow-wrap: anywhere; }
 .game-selection { margin: 18px 0 26px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .game-tile { display: flex; align-items: center; gap: 13px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: transparent; text-align: left; cursor: pointer; color: inherit; font-family: inherit; transition: border-color .15s, background .15s; width: 100%; box-sizing: border-box; }
