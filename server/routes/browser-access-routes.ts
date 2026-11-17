@@ -39,6 +39,11 @@ export async function registerBrowserAccessRoutes(
     await reconcile();
     return status;
   });
+  app.post(prefix + "/settings", async (request, reply) => {
+    const { id } = serverParams.parse(request.params);
+    const { requirePassword } = confirmation.extend({ requirePassword: z.boolean() }).parse(request.body);
+    return reply.code(202).send(await browser.updateSettings(id, requirePassword));
+  });
   app.get(prefix + "/accounts", async (request) => {
     const { id } = serverParams.parse(request.params);
     await browser.status(id);

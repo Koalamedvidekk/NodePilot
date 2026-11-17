@@ -214,7 +214,8 @@ Open a server and choose **Browser Players** to prepare an Eaglercraft gateway.
 The pinned gateway targets known stable Paper/Purpur releases from 1.19 through
 26.3, including 26.1/26.1.1/26.1.2 and 26.2. It accepts Eaglercraft 1.8/1.12.2
 clients and EaglerX protocol-v5 clients using Minecraft 26.3. The browser client
-must support an editable profile name and the NodePilot password prompt.
+must support an editable profile name. Password-protected mode also requires
+support for the NodePilot password prompt.
 New setups require **Java 25 or newer**, including on older Minecraft backends.
 Other software, snapshots and unknown future releases show an availability reason.
 Browser compatibility remains experimental; see the
@@ -240,6 +241,18 @@ allows setting its profile name. Browser accounts use
 separate stable UUIDs and progress. Owners can reset passwords and revoke access
 in this tab. Ordinary Java players continue using the server's existing public
 game address through the managed proxy.
+
+For clients that do not show a password prompt, stop Minecraft and turn off
+**Require NodePilot browser passwords** under **Browser login**. Confirm the
+change and wait for the gateway to restart, then copy its new address. Players
+can join without creating a NodePilot account, using 1–13 letters, numbers or
+underscores (optionally prefixed with `np_`). Their name and UUID remain stable
+across reconnects; existing browser accounts keep their UUID and progress.
+Revoked account names remain blocked. In open mode anyone can use an unrevoked
+browser name; install a compatible server login plugin if you want to protect
+player identities. Switching back to password mode requires registered accounts.
+Creating an account for an existing open player preserves that player's UUID.
+This setting does not change normal Java authentication or backend protection.
 
 Browser account passwords accept **4–127 characters**, within the client's
 255-byte UTF-8 limit. Existing passwords keep working. NodePilot updates its own

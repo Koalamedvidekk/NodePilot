@@ -55,6 +55,7 @@ public final class BrowserAuth {
             .build();
     private URI verifyUrl;
     private String token;
+    private boolean requirePassword = true;
     private volatile boolean ready;
 
     private record Identity(String name, UUID uuid) {}
@@ -102,6 +103,7 @@ public final class BrowserAuth {
             }
             verifyUrl = candidate;
             token = candidateToken;
+            requirePassword = !config.has("requirePassword") || config.get("requirePassword").getAsBoolean();
             ready = true;
             logger.info("NODEPILOT_BROWSER_AUTH_READY");
         } catch (Exception error) {
@@ -118,6 +120,10 @@ public final class BrowserAuth {
                 event.kickUser("NodePilot browser authentication is unavailable.");
                 return;
             }
+            if (!requirePassword) {
+                event.setAuthRequired(EnumAuthResponse.SKIP);
+                return;
+            }
             event.setUseAuthType(EnumAuthType.PLAINTEXT);
             event.setAuthMessage("Enter the password for your NodePilot browser account.");
             event.setAuthRequired(EnumAuthResponse.REQUIRE);
@@ -128,7 +134,7 @@ public final class BrowserAuth {
             event.setLoginDenied(DENIED);
             byte[] supplied = event.getAuthPasswordDataResponse();
             byte[] authName = event.getAuthUsername();
-            if (!ready || event.getAuthType() != EnumAuthType.PLAINTEXT ||
+            if (!ready || !requirePassword || event.getAuthType() != EnumAuthType.PLAINTEXT ||
                     supplied.length < 4 || supplied.length > 255 || authName.length > 64) {
                 return null;
             }
@@ -167,12 +173,47 @@ public final class BrowserAuth {
         }
 
         @Subscribe(priority = Short.MAX_VALUE)
-        public void requireApprovedIdentity(EaglercraftLoginEvent event) {
+        public EventTask requireApprovedIdentity(EaglercraftLoginEvent event) {
+            if (event.isCancelled()) return null;
+            if (ready && !requirePassword) {
+                return EventTask.async(() -> {
+                    if (!requests.tryAcquire()) {
+                        event.setKickMessage("Browser login is busy. Try again shortly.");
+                        return;
+                    }
+                    try {
+                        JsonObject body = new JsonObject();
+                        body.addProperty("name", event.getProfileUsername());
+                        HttpRequest request = HttpRequest.newBuilder(verifyUrl.resolve("/open"))
+                                .timeout(Duration.ofSeconds(5))
+                                .header("Authorization", "Bearer " + token)
+                                .header("Content-Type", "application/json")
+                                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                                .build();
+                        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+                        if (response.statusCode() != 200 || response.body().length() > 2048) throw new IllegalStateException();
+                        JsonObject result = JSON.fromJson(response.body(), JsonObject.class);
+                        if (!result.has("ok") || !result.get("ok").getAsBoolean()) throw new IllegalStateException();
+                        String name = result.get("name").getAsString();
+                        if (!name.matches("np_[A-Za-z0-9_]{1,13}")) throw new IllegalStateException();
+                        approve(event, new Identity(name, UUID.fromString(result.get("uuid").getAsString())));
+                    } catch (Exception ignored) {
+                        event.setKickMessage("Browser login unavailable. Use 1-13 letters, numbers or underscores; revoked and reserved names cannot join.");
+                    } finally {
+                        requests.release();
+                    }
+                });
+            }
             Identity identity = approved.remove(event.getLoginConnection());
             if (!ready || identity == null) {
                 event.setKickMessage(DENIED);
-                return;
+                return null;
             }
+            approve(event, identity);
+            return null;
+        }
+
+        private void approve(EaglercraftLoginEvent event, Identity identity) {
             event.setProfileUsername(identity.name());
             event.setProfileUUID(identity.uuid());
             Channel channel = event.getLoginConnection().netty().getChannel();

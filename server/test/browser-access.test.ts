@@ -267,6 +267,22 @@ test('the browser enable API requires explicit JSON confirmation before starting
   assert.equal(starts, 1);
 });
 
+test('browser settings API validates explicit confirmation and a boolean password requirement', async (t) => {
+  const changes: boolean[] = [];
+  const browser = { updateSettings: async (_id: string, required: boolean) => { changes.push(required); return { requirePassword: required }; } } as unknown as BrowserAccessService;
+  const app = Fastify();
+  app.setErrorHandler((error, _request, reply) => { const handled = asAppError(error); reply.code(handled.statusCode).send({ error: handled.code }); });
+  await registerBrowserAccessRoutes(app, browser, async () => {});
+  t.after(() => app.close());
+  const url = `/api/servers/${serverId}/browser-access/settings`;
+  for (const payload of [{ requirePassword: false }, { confirm: true, requirePassword: 'false' }, { confirm: false, requirePassword: false }]) {
+    assert.equal((await app.inject({ method: 'POST', url, payload })).statusCode, 400);
+  }
+  assert.deepEqual(changes, []);
+  assert.equal((await app.inject({ method: 'POST', url, payload: { confirm: true, requirePassword: false } })).statusCode, 202);
+  assert.deepEqual(changes, [false]);
+});
+
 test('failed browser dependency verification and missing Java leave the original server configuration intact', async (t) => {
   for (const options of [{ downloadError: true }, { noJava: true }]) {
     await t.test(Object.keys(options)[0], async (subtest) => {
@@ -598,4 +614,38 @@ test('browser authentication listener requires its scoped token and verifies loc
   await unlink(path.join(state.serverRoot, 'usercache.json'));
   state.service.accounts.revoke(serverId, account.id);
   assert.equal((await verify(`Bearer ${record.bridgeToken}`)).status, 403);
+});
+
+test('open browser login requires a scoped local token and the persisted open setting, and preserves identities', async (t) => {
+  const state = await fixture(t);
+  await state.setup();
+  assert.equal((await state.service.status(serverId)).requirePassword, true);
+  const record = state.row();
+  const live = { children: [], http: [] as HttpServer[], sockets: new Set<net.Socket>(), publicAddress: null, stopping: false };
+  const internals = state.service as unknown as { authListener(id: string, configuration: unknown, runtime: unknown): Promise<void> };
+  await internals.authListener(serverId, record, live);
+  t.after(() => { live.stopping = true; for (const listener of live.http) { listener.closeAllConnections(); listener.close(); } });
+  const endpoint = `http://127.0.0.1:${record.authPort}/open`;
+  const login = (name = 'Alex', token = record.bridgeToken) => fetch(endpoint, { method: 'POST', headers: {
+    'content-type': 'application/json', authorization: `Bearer ${token}`,
+  }, body: JSON.stringify({ name }), signal: AbortSignal.timeout(10_000) });
+  assert.equal((await login()).status, 403);
+  const account = await state.service.accounts.create(serverId, { name: 'Alex', password: '1234' });
+  const originalProperties = await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8');
+  await state.service.updateSettings(serverId, false);
+  while (state.service.isBusy(serverId)) await delay(10);
+  assert.equal((await state.service.status(serverId)).requirePassword, false);
+  const config = JSON.parse(await readFile(path.join(state.installed.directory, 'plugins/nodepilot-browser-auth/config.json'), 'utf8'));
+  assert.equal(config.requirePassword, false);
+  assert.equal(await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8'), originalProperties);
+  assert.equal((await login('Alex', 'incorrect-token')).status, 403);
+  assert.deepEqual(await (await login()).json(), { ok: true, name: account.name, uuid: account.uuid });
+  assert.deepEqual(await (await login('NP_ALEX')).json(), { ok: true, name: account.name, uuid: account.uuid });
+  state.service.accounts.revoke(serverId, account.id);
+  assert.equal((await login()).status, 403);
+  await state.service.updateSettings(serverId, true);
+  while (state.service.isBusy(serverId)) await delay(10);
+  assert.equal((await login('Guest')).status, 403, 'An old listener must honor the new persisted setting');
+  state.setActive(true);
+  await assert.rejects(state.service.updateSettings(serverId, false), { code: 'server_active' });
 });

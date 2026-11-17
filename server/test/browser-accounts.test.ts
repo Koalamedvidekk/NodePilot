@@ -22,6 +22,27 @@ function fixture(t: TestContext) {
   return { database, accounts: new BrowserAccountRepository(database) };
 }
 
+test('open identities are persistent, scoped, respect revocation and survive conversion to password accounts', async (t) => {
+  const { database, accounts } = fixture(t);
+  const open = accounts.resolveOpenIdentity(firstServer, 'Alex');
+  assert.ok(open);
+  assert.equal(open.name, 'np_Alex');
+  const persisted = new BrowserAccountRepository(database);
+  assert.deepEqual(persisted.resolveOpenIdentity(firstServer, 'NP_ALEX'), open);
+  assert.notEqual(accounts.resolveOpenIdentity(secondServer, 'Alex')?.uuid, open.uuid);
+  assert.equal(accounts.resolveOpenIdentity(firstServer, '../escape'), null);
+  assert.equal(accounts.resolveOpenIdentity(firstServer, 'abcdefghijklmn'), null);
+  assert.throws(() => accounts.resolveOpenIdentity(firstServer, 'Owner', [{ name: 'np_Owner', uuid: open.uuid }]), { code: 'browser_identity_reserved' });
+  assert.throws(() => accounts.resolveOpenIdentity(firstServer, 'Alex', [{ name: open.name, uuid: '33333333-3333-4333-8333-333333333333' }]), { code: 'browser_identity_reserved' });
+  assert.deepEqual(accounts.resolveOpenIdentity(firstServer, 'Alex', [open]), open);
+  const account = await accounts.create(firstServer, { name: 'alex', password: '1234' }, [open]);
+  assert.equal(account.uuid, open.uuid);
+  assert.equal(account.name, open.name);
+  assert.deepEqual(accounts.resolveOpenIdentity(firstServer, 'Alex'), open);
+  accounts.revoke(firstServer, account.id);
+  assert.equal(accounts.resolveOpenIdentity(firstServer, 'Alex'), null);
+});
+
 test('browser account identities persist, remain server scoped, and never expose credentials', async (t) => {
   const { database, accounts } = fixture(t);
   const account = await accounts.create(firstServer, { name: 'Alex', password: firstPassword });

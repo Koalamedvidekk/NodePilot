@@ -72,7 +72,7 @@ async function stopChild() {
 }
 
 function privateFieldsAbsent(body) {
-  const json = JSON.stringify(body);
+  const json = JSON.stringify(body, (key, value) => key === "requirePassword" && typeof value === "boolean" ? undefined : value);
   assert.doesNotMatch(json, /"[^"]*(?:password|hash|salt|token)[^"]*"\s*:/i);
   assert.equal(json.includes(password), false);
   assert.equal(json.includes(replacementPassword), false);

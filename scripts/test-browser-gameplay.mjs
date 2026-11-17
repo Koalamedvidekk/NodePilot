@@ -13,10 +13,11 @@ assert.ok(process.env.NODEPILOT_BROWSER_TEST_CONFIG, 'Set NODEPILOT_BROWSER_TEST
 assert.equal(typeof WebSocket, 'function', 'This integration test requires Node.js 22+.');
 const fixture = JSON.parse(await readFile(process.env.NODEPILOT_BROWSER_TEST_CONFIG, 'utf8'));
 assert.match(fixture.publicAddress, /^wss?:\/\//);
-assert.match(fixture.name, /^np_[A-Za-z0-9_]{1,13}$/);
+assert.match(fixture.name, /^(?:np_)?[A-Za-z0-9_]{1,13}$/i);
 assert.match(fixture.expectedUuid, /^[a-f0-9-]{36}$/i);
 for (const key of ['serverPort', 'backendPort', 'backendProtocol']) assert.ok(Number.isInteger(fixture[key]) && fixture[key] > 0 && fixture[key] <= 65535, 'Invalid test endpoint.');
 const modern = fixture.clientProtocol === 777;
+const requirePassword = fixture.requirePassword !== false;
 assert.ok(fixture.clientProtocol === undefined || [47,777].includes(fixture.clientProtocol), 'Only the verified 1.8 and 26.3 test codecs are available.');
 
 function short(value) {
@@ -54,7 +55,7 @@ async function browserLogin(password, expectWorld) {
     }
     socket.onopen = () => socket.send(Buffer.concat([
       Buffer.from([1, 2]), short(1), short(modern ? 5 : 3), short(1), short(modern ? 777 : 47),
-      text('NodePilotTest'), text('1.0'), Buffer.from([1]), text(fixture.name),
+      text('NodePilotTest'), text('1.0'), Buffer.from([requirePassword ? 1 : 0]), text(fixture.name),
     ]));
     socket.onerror = () => finish(new Error('The public game WebSocket failed.'));
     socket.onclose = () => { if (!settled) finish(new Error('The game connection closed before the test completed.')); };
@@ -66,7 +67,9 @@ async function browserLogin(password, expectWorld) {
             case 2:
               assert.equal(packet.readUInt16BE(1), modern ? 5 : 3);
               assert.equal(packet.readUInt16BE(3), modern ? 777 : 47);
-              socket.send(Buffer.concat([Buffer.from([4]), text(fixture.name), text('default'), text(password), ...(modern ? [Buffer.from([0,0,0,0])] : [])]));
+              { const versionOffset = 6 + packet[5];
+                assert.equal(packet[versionOffset + 1 + packet[versionOffset]], requirePassword ? 255 : 0, 'The gateway must advertise the selected authentication mode.'); }
+              socket.send(Buffer.concat([Buffer.from([4]), text(fixture.name), text('default'), text(requirePassword ? password : ''), ...(modern ? [Buffer.from([0,0,0,0])] : [])]));
               break;
             case 5: {
               const offset = 2 + packet[1];
@@ -182,8 +185,10 @@ async function nativeLogin(port, protocol) {
 }
 
 await delay(1500);
-assert.equal((await browserLogin('incorrect-test-password', false)).allowed, false);
-console.log('PASS incorrect browser password denied');
+if (requirePassword) {
+  assert.equal((await browserLogin('incorrect-test-password', false)).allowed, false);
+  console.log('PASS incorrect browser password denied');
+}
 await delay(1500);
 const first = await browserLogin(fixture.password, true);
 assert.equal(first.allowed, true);

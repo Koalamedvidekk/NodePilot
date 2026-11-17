@@ -416,6 +416,32 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
             )}
           </section>
 
+          {status.configured && (
+            <section className="panel management-panel">
+              <div className="panel-heading">
+                <div>
+                  <h3>Browser login</h3>
+                  <p>{status.requirePassword !== false
+                    ? "Players use their NodePilot browser account and password. Clients must support the password prompt."
+                    : "Open access: players join without a NodePilot password. You can install a server login plugin to protect their accounts."}</p>
+                </div>
+              </div>
+              <label className="browser-approval">
+                <input type="checkbox" checked={status.requirePassword !== false} disabled={!canChange}
+                  onChange={(event) => {
+                    const required = event.target.checked;
+                    if (!window.confirm(required
+                      ? "Require NodePilot browser passwords? Only registered browser accounts will be able to join. The gateway will restart and its temporary address will change."
+                      : "Allow browser players to join without a NodePilot password? Anyone can use an unrevoked browser name. Install a server login plugin if you want to protect player identities. The gateway will restart and its temporary address will change.")) return;
+                    void run("settings", () => browserAccessApi.settings(server.id, required), "Browser login setting saved. Wait for the gateway, then copy its new address.");
+                  }} />
+                <span>Require NodePilot browser passwords</span>
+              </label>
+              <p className="input-note">Stop Minecraft before changing this setting. Browser names use the np_ prefix and retain their UUID and progress. Java account authentication stays enabled.</p>
+              {status.requirePassword === false && <p className="input-note">Use the same player name each time (1–13 letters, numbers or underscores, with an optional np_ prefix). Existing browser accounts keep their progress; revoked names remain blocked. NodePilot accounts do not protect names while open access is enabled.</p>}
+            </section>
+          )}
+
           {status.preview && (
             <section
               className="panel management-panel browser-preview"
@@ -485,10 +511,9 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                 <div>
                   <h3>Browser accounts</h3>
                   <p>
-                    Create a separate account for each player. Browser names use
-                    the reserved <code>np_</code> prefix and keep a stable UUID.
-                    {' '}Players must set their Eaglercraft profile username to
-                    the full account name before joining, then enter its password.
+                    {status.requirePassword === false
+                      ? "Accounts are optional in open-access mode. Players can join without a NodePilot password; names use the np_ prefix and keep a stable UUID. Revoked account names remain blocked."
+                      : <>Create a separate account for each player. Browser names use the reserved <code>np_</code> prefix and keep a stable UUID. Players must set their Eaglercraft profile username to the full account name before joining, then enter its password.</>}
                   </p>
                 </div>
                 <span className="status-pill is-offline">

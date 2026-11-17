@@ -99,6 +99,13 @@ export class BrowserAccountRepository {
         UNIQUE (server_id, name)
       );
       CREATE INDEX IF NOT EXISTS browser_accounts_server_idx ON browser_accounts(server_id);
+      CREATE TABLE IF NOT EXISTS browser_open_identities (
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        uuid TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (server_id, name)
+      );
     `);
   }
 
@@ -116,12 +123,10 @@ export class BrowserAccountRepository {
       throw new AppError(400, 'invalid_browser_name', 'Use 1–13 letters, numbers, or underscores. Browser login names receive the np_ prefix.');
     }
     validatePassword(input.password);
-    const name = `np_${input.name}`;
-    const uuid = randomUUID();
-    if (reservedIdentities.some((identity) => identity.name.toLowerCase() === name.toLowerCase()
-      || identity.uuid?.replaceAll('-', '').toLowerCase() === uuid.replaceAll('-', ''))) {
-      throw new AppError(409, 'browser_identity_reserved', 'That browser identity conflicts with an existing Java player or operator. Choose another name.');
-    }
+    const open = this.openIdentity(serverId, `np_${input.name}`);
+    let name = open?.name ?? `np_${input.name}`;
+    let uuid = open?.uuid ?? randomUUID();
+    this.checkReserved({ name, uuid }, reservedIdentities, Boolean(open));
     this.requireServer(serverId);
     if (this.findByName(serverId, name)) {
       throw new AppError(409, 'browser_account_exists', 'A browser account with that name already exists.');
@@ -137,6 +142,9 @@ export class BrowserAccountRepository {
       if (this.findByName(serverId, name)) {
         throw new AppError(409, 'browser_account_exists', 'A browser account with that name already exists.');
       }
+      const freshOpen = this.openIdentity(serverId, name);
+      if (freshOpen) ({ name, uuid } = freshOpen);
+      this.checkReserved({ name, uuid }, reservedIdentities, Boolean(freshOpen));
       this.database.prepare(`INSERT INTO browser_accounts
         (id, server_id, name, uuid, password_salt, password_hash, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(id, serverId, name, uuid, salt, hash.toString('hex'), now, now);
@@ -181,6 +189,41 @@ export class BrowserAccountRepository {
     const fresh = this.findByName(serverId, name);
     if (!fresh || fresh.revoked_at || fresh.password_hash !== account.password_hash) return null;
     return { name: account.name, uuid: account.uuid };
+  }
+
+  resolveOpenIdentity(serverId: string, suppliedName: string, reserved: ReservedBrowserIdentity[] = []): { name: string; uuid: string } | null {
+    if (typeof suppliedName !== 'string') return null;
+    const unprefixed = suppliedName.replace(/^np_/i, '');
+    if (!/^[A-Za-z0-9_]{1,13}$/.test(unprefixed)) return null;
+    this.requireServer(serverId);
+    this.consumeAttempt(`open:${serverId}`, 120);
+    const name = `np_${unprefixed}`;
+    return this.database.transaction(() => {
+      const account = this.findByName(serverId, name);
+      if (account?.revoked_at) return null;
+      const existing = account ?? this.openIdentity(serverId, name);
+      const identity = existing ? { name: existing.name, uuid: existing.uuid } : { name, uuid: randomUUID() };
+      this.checkReserved(identity, reserved, Boolean(existing));
+      if (!existing) {
+        this.database.prepare('INSERT INTO browser_open_identities (server_id, name, uuid, created_at) VALUES (?, ?, ?, ?)')
+          .run(serverId, identity.name, identity.uuid, new Date().toISOString());
+      }
+      return identity;
+    })();
+  }
+
+  private openIdentity(serverId: string, name: string): { name: string; uuid: string } | undefined {
+    return this.database.prepare('SELECT name, uuid FROM browser_open_identities WHERE server_id = ? AND name = ? COLLATE NOCASE')
+      .get(serverId, name) as { name: string; uuid: string } | undefined;
+  }
+
+  private checkReserved(identity: { name: string; uuid: string }, reserved: ReservedBrowserIdentity[], allowSameIdentity: boolean): void {
+    const uuid = identity.uuid.replaceAll('-', '').toLowerCase();
+    if (reserved.some(entry => {
+      const sameName = entry.name.toLowerCase() === identity.name.toLowerCase();
+      const sameUuid = entry.uuid?.replaceAll('-', '').toLowerCase() === uuid;
+      return (sameName || sameUuid) && !(allowSameIdentity && sameName && sameUuid);
+    })) throw new AppError(409, 'browser_identity_reserved', 'That browser identity conflicts with an existing Java player or operator. Choose another name.');
   }
 
   private consumeAttempt(key: string, maximum: number): void {

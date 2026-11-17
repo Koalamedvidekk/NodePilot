@@ -233,6 +233,13 @@ try {
             publicAddress: null,
           };
           body = status;
+        } else if (url.pathname === `${apiBase}/settings`) {
+          assert.equal(method, "POST");
+          const input = request.postDataJSON();
+          assert.equal(input.confirm, true);
+          assert.equal(typeof input.requirePassword, "boolean");
+          status = { ...status, requirePassword: input.requirePassword };
+          body = status;
         } else if (url.pathname === `${apiBase}/accounts`) {
           if (method === "POST") {
             assert.deepEqual(request.postDataJSON(), {
@@ -338,6 +345,15 @@ try {
           .waitFor();
         assert.equal(setupRequests, 1);
         assert.equal(inspectRequests, 2);
+        const passwords = page.getByRole("checkbox", { name: "Require NodePilot browser passwords", exact: true });
+        assert.equal(await passwords.isChecked(), true);
+        page.once("dialog", dialog => dialog.accept());
+        await passwords.click();
+        await page.getByText("Open access: players join without a NodePilot password.", { exact: false }).waitFor();
+        assert.equal(await passwords.isChecked(), false);
+        page.once("dialog", dialog => dialog.accept());
+        await passwords.click();
+        await page.getByText("Players use their NodePilot browser account and password.", { exact: false }).waitFor();
         assert.equal(
           await page
             .getByRole("button", { name: "Review Setup", exact: true })

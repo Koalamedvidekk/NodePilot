@@ -12,6 +12,7 @@ export interface BrowserAccessStatus {
   serverId: string;
   configured: boolean;
   enabled: boolean;
+  requirePassword?: boolean;
   status:
     | "disabled"
     | "preparing"
@@ -64,6 +65,8 @@ export const browserAccessApi = {
     post<BrowserAccessStatus>(`${base(serverId)}/enable`, { confirm: true }),
   disable: (serverId: string) =>
     post<BrowserAccessStatus>(`${base(serverId)}/disable`, { confirm: true }),
+  settings: (serverId: string, requirePassword: boolean) =>
+    post<BrowserAccessStatus>(`${base(serverId)}/settings`, { confirm: true, requirePassword }),
   accounts: (serverId: string) =>
     request<{ accounts: BrowserAccount[] }>(`${base(serverId)}/accounts`),
   createAccount: (serverId: string, name: string, password: string) =>

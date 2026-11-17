@@ -4,8 +4,13 @@ NodePilot installs this Velocity plugin with its managed browser gateway. It req
 EaglerXServer 1.1.1 and the local NodePilot verification endpoint. Ordinary Java
 connections retain Velocity's online authentication.
 
-The plugin requests an Eaglercraft password and verifies it through a scoped
-loopback HTTP endpoint. The public WebSocket connection must use WSS, or local WS
+By default the plugin requests an Eaglercraft password and verifies it through a
+scoped loopback HTTP endpoint. Owners can explicitly select open access in the
+panel: the plugin then skips the password challenge and resolves the player's
+stable, server-scoped identity through the separate `/open` verifier endpoint.
+Revoked and conflicting reserved identities remain denied. Open access does not
+prove ownership of a player name; use a server login plugin if desired.
+The public WebSocket connection must use WSS, or local WS
 for testing. NodePilot's HTTP gateway supplies the secret header required by the
 Eagler listener. Cookie authentication and nickname selection are disabled.
 Failed verification, missing configuration and unavailable NodePilot services deny
@@ -13,7 +18,7 @@ browser login.
 
 ## Build
 
-Run this from the repository root with Node.js and a JDK 17 or newer on PATH.
+Run this from the repository root with Node.js and a JDK 25 or newer on PATH.
 
 ```sh
 node companion/nodepilot-velocity-auth/build.mjs
@@ -29,10 +34,12 @@ installing NodePilot receive this built artifact and do not need a Java compiler
 Upstream classes are provided at runtime and are excluded from the companion JAR.
 
 The plugin reads `plugins/nodepilot-browser-auth/config.json` in the managed
-proxy directory. NodePilot supplies `serverId`, `verifyUrl`, and `token`.
+proxy directory. NodePilot supplies `serverId`, `verifyUrl`, `token`, and
+`requirePassword` (defaults to true when absent).
 The verifier URL must be literal loopback HTTP with an explicit port. Its POST
 body contains `name` and `password`, with the scoped token in a Bearer header.
 An approved response contains `ok`, `name`, and `uuid`.
+Open-mode verification contains only `name` and uses the same scoped token.
 
 `NODEPILOT_BROWSER_AUTH_READY` is emitted only after configuration validation and
 authentication handler registration. NodePilot waits for this marker before
@@ -56,3 +63,6 @@ It verifies rejected passwords, the stored UUID, world chunks, position and
 movement packets, reconnects, the native Java authentication challenge, and
 rejection of direct backend login. The supplied credentials are never printed.
 The test requires Node.js 22 or newer and does not start or stop the game server.
+Set `requirePassword: false` to test a client that advertises no authentication
+capability and sends no password. Add `clientProtocol: 777` for 26.3/v5 and use
+`backendProtocol: 777` when the test server runs Paper 26.3.

@@ -55,6 +55,7 @@ interface Preview {
 interface BrowserRecord {
   configured: boolean;
   enabled: boolean;
+  requirePassword?: boolean;
   backendPort: number;
   wakePort: number;
   gatewayPort: number;
@@ -291,6 +292,7 @@ export class BrowserAccessService {
       serverId: id,
       configured: record?.configured ?? false,
       enabled: record?.enabled ?? false,
+      requirePassword: record?.requirePassword !== false,
       status: this.hasRecoveryBlock(id)
         ? "recovery_required"
         : operation.error
@@ -416,6 +418,7 @@ export class BrowserAccessService {
     const record: BrowserRecord = {
       configured: false,
       enabled: false,
+      requirePassword: this.record(server.id)?.requirePassword !== false,
       backendPort: await allocate(),
       wakePort: await allocate(),
       gatewayPort: await allocate(),
@@ -672,13 +675,19 @@ export class BrowserAccessService {
       "plugins/eaglerxserver/listeners.toml",
       `[[listener_list]]\nlistener_name = "nodepilot"\ninject_address = "0.0.0.0:${server.port}"\nvelocity_clone_listener = false\ndual_stack = true\nforward_secret = true\nforward_secret_header = "X-Eagler-Secret"\nforward_secret_file = "eagler_forwarding.secret"\n`,
     );
+    await this.writeAuthenticationConfiguration(server.id, record);
+  }
+
+  private async writeAuthenticationConfiguration(id: string, record: BrowserRecord): Promise<void> {
+    if (!record.installed) throw new Error("Browser dependencies are missing.");
     await writeConfiguration(
-      root,
+      record.installed.directory,
       "plugins/nodepilot-browser-auth/config.json",
       JSON.stringify({
-        serverId: server.id,
+        serverId: id,
         verifyUrl: `http://127.0.0.1:${record.authPort}/verify`,
         token: record.bridgeToken,
+        requirePassword: record.requirePassword !== false,
       }),
     );
   }
@@ -738,6 +747,40 @@ export class BrowserAccessService {
     return this.status(id);
   }
 
+  async updateSettings(id: string, requirePassword: boolean) {
+    this.requireStopped(id);
+    this.assertCanStart(id);
+    const record = this.record(id);
+    if (!record?.configured) throw new AppError(409, "browser_not_configured", "Set up Browser Players first.");
+    if (this.launches.has(id)) throw new AppError(409, "browser_operation_in_progress", "Wait for the browser gateway to finish starting.");
+    if ((record.requirePassword !== false) === requirePassword) return this.status(id);
+    // SQLite is authoritative; every launch rewrites only our companion's config.
+    // A crash after saving cannot bring back the previous authentication mode.
+    record.requirePassword = requirePassword;
+    this.save(id, record);
+    this.busy.add(id);
+    const operation = this.operation(id);
+    operation.error = null;
+    operation.phase = "Applying browser login settings and restarting the gateway";
+    operation.progressPercent = null;
+    const task = (async () => {
+      await this.stopOwned(id);
+      await this.writeAuthenticationConfiguration(id, record);
+      if (record.enabled && !this.stopping) await this.ensureOnline(id);
+      this.log(id, requirePassword ? "NodePilot browser passwords are required." : "Open browser access enabled. NodePilot passwords are not required.");
+      operation.phase = "Browser login settings applied";
+      operation.progressPercent = 100;
+    })().catch((error: unknown) => {
+      operation.error = errorMessage(error);
+      this.log(id, operation.error);
+    }).finally(() => {
+      this.busy.delete(id);
+      this.tasks.delete(task);
+    });
+    this.tasks.add(task);
+    return this.status(id);
+  }
+
   private async ensureOnline(id: string): Promise<void> {
     if (this.stopping)
       throw new AppError(
@@ -778,6 +821,7 @@ export class BrowserAccessService {
       record.installed.versions["nodepilot-browser-auth"] = authentication.version;
       this.save(id, record);
       if (live.stopping || this.stopping) throw new Error("Browser gateway startup was cancelled.");
+      await this.writeAuthenticationConfiguration(id, record);
       await this.authListener(id, record, live);
       const velocity = await this.launchProcess(
         id,
@@ -988,7 +1032,7 @@ export class BrowserAccessService {
       response.setHeader("Cache-Control", "no-store");
       if (
         request.method !== "POST" ||
-        request.url !== "/verify" ||
+        !["/verify", "/open"].includes(request.url ?? "") ||
         request.socket.remoteAddress !== "127.0.0.1" ||
         !equalToken(
           request.headers.authorization ?? "",
@@ -1017,18 +1061,19 @@ export class BrowserAccessService {
             name?: unknown;
             password?: unknown;
           };
-          if (
-            typeof body.name !== "string" ||
-            typeof body.password !== "string"
-          ) {
+          const open = request.url === "/open";
+          if (typeof body.name !== "string" || (!open && typeof body.password !== "string")) {
             response.writeHead(400).end();
             return;
           }
-          const identity = await this.accounts.verify(
-            id,
-            body.name,
-            body.password,
-          );
+          // Re-read the persisted setting: a stale gateway cannot bypass passwords.
+          if (open && this.record(id)?.requirePassword !== false) {
+            response.writeHead(403).end();
+            return;
+          }
+          const identity = open
+            ? this.accounts.resolveOpenIdentity(id, body.name, await this.reservedIdentities(id))
+            : await this.accounts.verify(id, body.name, body.password as string);
           const reserved = identity ? await this.reservedIdentities(id) : [];
           if (
             identity &&

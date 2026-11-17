@@ -10,7 +10,7 @@ import { BROWSER_AUTH_JAR_BASE64, BROWSER_AUTH_JAR_SHA256 } from './browser-auth
 import { BROWSER_GATEWAY_JAVA_MAJOR, browserJavaDependencies, cloudflaredDependency, type BrowserDependency } from './browser-dependency-manifest.js';
 
 const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
-export const BROWSER_AUTH_PLUGIN_VERSION = '0.1.1';
+export const BROWSER_AUTH_PLUGIN_VERSION = '0.1.2';
 
 export interface BrowserInstalledDependencies {
   directory: string;
