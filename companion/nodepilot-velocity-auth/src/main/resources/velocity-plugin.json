@@ -1,8 +1,8 @@
 {
   "id": "nodepilot-browser-auth",
-  "name": "NodePilot Browser Authentication",
-  "version": "0.1.2",
-  "description": "Authenticates Eaglercraft players against the local NodePilot account store.",
+  "name": "NodePilot Browser Gateway",
+  "version": "0.1.3",
+  "description": "Routes EaglerX guest profiles to Minecraft while preserving online-mode Java connections.",
   "authors": ["NodePilot contributors"],
   "dependencies": [{"id": "eaglerxserver", "optional": false}],
   "main": "dev.nodepilot.browser.BrowserAuth"

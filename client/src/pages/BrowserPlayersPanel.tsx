@@ -1,20 +1,13 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api";
 import {
   browserAccessApi,
   type BrowserAccessStatus,
-  type BrowserAccount,
 } from "../browser-access-api";
 import { Icon } from "../components/Icon";
 import type { Server } from "../types";
-import { errorMessage, formatDate, titleCase } from "../utils";
+import { errorMessage, titleCase } from "../utils";
 import "./browser-players.css";
 
 function browserError(cause: unknown): string {
@@ -33,29 +26,20 @@ function browserError(cause: unknown): string {
 
 export function BrowserPlayersPanel({ server }: { server: Server }) {
   const [status, setStatus] = useState<BrowserAccessStatus>();
-  const [accounts, setAccounts] = useState<BrowserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<string>();
   const [error, setError] = useState<string>();
   const [loadError, setLoadError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [approved, setApproved] = useState(false);
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  const [resetAccount, setResetAccount] = useState<BrowserAccount>();
-  const [resetPassword, setResetPassword] = useState("");
   const sequence = useRef(0);
 
   const load = useCallback(async () => {
     const request = ++sequence.current;
     try {
-      const [next, listing] = await Promise.all([
-        browserAccessApi.status(server.id),
-        browserAccessApi.accounts(server.id),
-      ]);
+      const next = await browserAccessApi.status(server.id);
       if (request !== sequence.current) return;
       setStatus(next);
-      setAccounts(listing.accounts);
       setLoadError(undefined);
     } catch (cause) {
       if (request === sequence.current) setLoadError(browserError(cause));
@@ -115,52 +99,6 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
     }
   };
 
-  const createAccount = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!stopped || busy) return;
-    await run(
-      "account",
-      async () => {
-        await browserAccessApi.createAccount(server.id, name, password);
-        setName("");
-        setPassword("");
-      },
-      "Browser account created. Share its name and password privately with the player.",
-    );
-  };
-
-  const savePassword = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!resetAccount) return;
-    await run(
-      "password",
-      async () => {
-        await browserAccessApi.resetPassword(
-          server.id,
-          resetAccount.id,
-          resetPassword,
-        );
-        setResetAccount(undefined);
-        setResetPassword("");
-      },
-      "Browser password reset. The previous password will no longer work.",
-    );
-  };
-
-  const revoke = async (account: BrowserAccount) => {
-    if (
-      !window.confirm(
-        `Revoke browser access for ${account.name}?\n\nThis account will no longer be able to log in.`,
-      )
-    )
-      return;
-    await run(
-      "revoke",
-      () => browserAccessApi.revokeAccount(server.id, account.id),
-      `${account.name} can no longer log in.`,
-    );
-  };
-
   const disable = async () => {
     if (
       !window.confirm(
@@ -202,11 +140,9 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
     <section className="browser-players-panel">
       <div className="versions-heading">
         <div>
-          <p className="eyebrow">EAGLERCRAFT CONNECTIONS</p>
           <h3>Browser Players</h3>
           <p>
-            Manage browser-player accounts and a public WebSocket address for
-            this server.
+            Connect Eaglercraft players to this server through an EaglerX WSS gateway.
           </p>
         </div>
         <button
@@ -321,8 +257,7 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                   </button>
                 </div>
                 <p>
-                  Paste this address into a compatible Eaglercraft client, then
-                  sign in with the browser account created below.
+                  In Eaglercraft, open Multiplayer, paste this address, and join with your player name.
                 </p>
               </div>
             )}
@@ -361,7 +296,7 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                       ? "Starting Gateway…"
                       : status.status === "error"
                         ? "Retry Gateway"
-                        : "Enable"}
+                        : status.needsOpenEnable ? "Enable public access" : "Enable"}
                   </button>
                 )}
               {status.configured && (
@@ -383,6 +318,7 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
               </p>
             )}
             <div className="browser-notes">
+              <p>Players join directly. If you want to verify player names, install a compatible login plugin on your Minecraft server.</p>
               <p>
                 Cloudflare provides a temporary public WSS address without an
                 account or port forwarding. The address changes when the tunnel
@@ -416,32 +352,6 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
             )}
           </section>
 
-          {status.configured && (
-            <section className="panel management-panel">
-              <div className="panel-heading">
-                <div>
-                  <h3>Browser login</h3>
-                  <p>{status.requirePassword !== false
-                    ? "Players use their NodePilot browser account and password. Clients must support the password prompt."
-                    : "Open access: players join without a NodePilot password. You can install a server login plugin to protect their accounts."}</p>
-                </div>
-              </div>
-              <label className="browser-approval">
-                <input type="checkbox" checked={status.requirePassword !== false} disabled={!canChange}
-                  onChange={(event) => {
-                    const required = event.target.checked;
-                    if (!window.confirm(required
-                      ? "Require NodePilot browser passwords? Only registered browser accounts will be able to join. The gateway will restart and its temporary address will change."
-                      : "Allow browser players to join without a NodePilot password? Anyone can use an unrevoked browser name. Install a server login plugin if you want to protect player identities. The gateway will restart and its temporary address will change.")) return;
-                    void run("settings", () => browserAccessApi.settings(server.id, required), "Browser login setting saved. Wait for the gateway, then copy its new address.");
-                  }} />
-                <span>Require NodePilot browser passwords</span>
-              </label>
-              <p className="input-note">Stop Minecraft before changing this setting. Browser names use the np_ prefix and retain their UUID and progress. Java account authentication stays enabled.</p>
-              {status.requirePassword === false && <p className="input-note">Use the same player name each time (1–13 letters, numbers or underscores, with an optional np_ prefix). Existing browser accounts keep their progress; revoked names remain blocked. NodePilot accounts do not protect names while open access is enabled.</p>}
-            </section>
-          )}
-
           {status.preview && (
             <section
               className="panel management-panel browser-preview"
@@ -449,7 +359,6 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
             >
               <div className="panel-heading">
                 <div>
-                  <p className="eyebrow">REVIEW BEFORE APPLYING</p>
                   <h3 id="browser-preview-heading">
                     Server configuration changes
                   </h3>
@@ -477,8 +386,7 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                   disabled={busy || !stopped}
                 />
                 <span>
-                  I approve these connection and authentication changes and
-                  understand that browser players use separate local identities.
+                  I approve the changes to the server and gateway configuration shown above.
                 </span>
               </label>
               <button
@@ -502,166 +410,6 @@ export function BrowserPlayersPanel({ server }: { server: Server }) {
                   ? "Applying Setup…"
                   : "Approve & Apply Setup"}
               </button>
-            </section>
-          )}
-
-          {available && (
-            <section className="panel management-panel">
-              <div className="panel-heading">
-                <div>
-                  <h3>Browser accounts</h3>
-                  <p>
-                    {status.requirePassword === false
-                      ? "Accounts are optional in open-access mode. Players can join without a NodePilot password; names use the np_ prefix and keep a stable UUID. Revoked account names remain blocked."
-                      : <>Create a separate account for each player. Browser names use the reserved <code>np_</code> prefix and keep a stable UUID. Players must set their Eaglercraft profile username to the full account name before joining, then enter its password.</>}
-                  </p>
-                </div>
-                <span className="status-pill is-offline">
-                  {accounts.filter((account) => !account.revokedAt).length}{" "}
-                  active
-                </span>
-              </div>
-              <form
-                className="browser-account-form"
-                onSubmit={(event) => void createAccount(event)}
-              >
-                <label className="field-group">
-                  <span>Browser username</span>
-                  <div className="browser-name-input">
-                    <span aria-hidden="true">np_</span>
-                    <input
-                      aria-label="Browser username"
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      pattern="[A-Za-z0-9_]{1,13}"
-                      minLength={1}
-                      maxLength={13}
-                      placeholder="alex"
-                      autoComplete="off"
-                      required
-                      disabled={busy || !stopped}
-                    />
-                  </div>
-                  <small className="input-note">
-                    1–13 letters, numbers or underscores after the prefix.
-                  </small>
-                </label>
-                <label className="field-group">
-                  <span>Account password</span>
-                  <input
-                    type="password"
-                    aria-label="Account password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    minLength={4}
-                    maxLength={127}
-                    autoComplete="new-password"
-                    required
-                    disabled={busy || !stopped}
-                  />
-                  <small className="input-note">
-                    Use 4–127 characters. Share the password privately.
-                  </small>
-                </label>
-                <button
-                  className="button button-primary"
-                  type="submit"
-                  disabled={busy || !stopped || !name || password.length < 4}
-                >
-                  <Icon name="plus" size={16} />{" "}
-                  {action === "account" ? "Creating…" : "Create Account"}
-                </button>
-              </form>
-              {!stopped && (
-                <p className="input-note">
-                  Stop Minecraft before creating a browser account so NodePilot
-                  can reserve its name against saved Java player and operator
-                  identities. Password reset and revocation remain available.
-                </p>
-              )}
-              {accounts.length === 0 ? (
-                <p className="browser-empty">
-                  No browser accounts yet. Create one before sharing your server
-                  address.
-                </p>
-              ) : (
-                <div className="browser-account-list">
-                  {accounts.map((account) => (
-                    <article className="browser-account" key={account.id}>
-                      <div>
-                        <strong>{account.name}</strong>
-                        <code>{account.uuid}</code>
-                        <small>
-                          {account.revokedAt
-                            ? `Revoked ${formatDate(account.revokedAt)}`
-                            : `Created ${formatDate(account.createdAt)}`}
-                        </small>
-                      </div>
-                      <div className="browser-account-actions">
-                        <button
-                          type="button"
-                          className="button button-secondary button-small"
-                          disabled={busy || Boolean(account.revokedAt)}
-                          onClick={() => {
-                            setResetAccount(account);
-                            setResetPassword("");
-                          }}
-                        >
-                          Reset Password
-                        </button>
-                        <button
-                          type="button"
-                          className="button button-danger-outline button-small"
-                          disabled={busy || Boolean(account.revokedAt)}
-                          onClick={() => void revoke(account)}
-                        >
-                          Revoke
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
-              {resetAccount && (
-                <form
-                  className="browser-reset-form"
-                  onSubmit={(event) => void savePassword(event)}
-                >
-                  <label className="field-group">
-                    <span>New password for {resetAccount.name}</span>
-                    <input
-                      type="password"
-                      aria-label={`New password for ${resetAccount.name}`}
-                      value={resetPassword}
-                      onChange={(event) => setResetPassword(event.target.value)}
-                      minLength={4}
-                      maxLength={127}
-                      autoComplete="new-password"
-                      required
-                      autoFocus
-                      disabled={busy}
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    className="button button-primary"
-                    disabled={busy || resetPassword.length < 4}
-                  >
-                    Save Password
-                  </button>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      setResetAccount(undefined);
-                      setResetPassword("");
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </form>
-              )}
             </section>
           )}
 

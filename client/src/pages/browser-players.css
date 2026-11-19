@@ -15,8 +15,7 @@
   border-color: rgba(78, 225, 164, 0.3);
   background: rgba(78, 225, 164, 0.05);
 }
-.browser-gateway-actions,
-.browser-account-actions {
+.browser-gateway-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -104,114 +103,14 @@
   margin-top: 3px;
   accent-color: var(--cyan);
 }
-.browser-account-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 14px;
-  align-items: start;
-}
-.browser-account-form > button {
-  margin-top: 26px;
-}
-.browser-account-form input,
-.browser-reset-form input {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  min-height: 42px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--text);
-  background: var(--bg);
-  font-size: 13px;
-}
-.browser-account-form input:focus,
-.browser-reset-form input:focus {
-  border-color: var(--accent-2);
-}
-.browser-account-form .input-note {
-  display: block;
-  margin: 6px 0 0;
-}
-.browser-name-input {
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.browser-name-input > span {
-  padding-left: 12px;
-  color: var(--muted);
-  font-family: var(--font-mono, monospace);
-}
-.browser-account-form .browser-name-input input {
-  border: 0;
-  flex: 1;
-  width: 100%;
-  min-width: 0;
-  padding-left: 4px;
-}
-.browser-account-list {
-  display: grid;
-  gap: 12px;
-}
-.browser-account {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  align-items: center;
-}
-.browser-account > div:first-child {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-.browser-account code {
-  font-size: 12px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-.browser-account small,
-.browser-empty {
-  color: var(--muted);
-  font-size: 13px;
-}
-.browser-reset-form {
-  border-top: 1px solid var(--line);
-  padding-top: 18px;
-  display: flex;
-  gap: 12px;
-  align-items: end;
-  flex-wrap: wrap;
-}
-.browser-reset-form .field-group {
-  flex: 1;
-  min-width: 220px;
-}
 .browser-players-panel .browser-logs {
   height: 240px;
   min-height: 100px;
   max-height: 300px;
 }
 @media (max-width: 800px) {
-  .browser-account-form {
-    grid-template-columns: 1fr;
-  }
-  .browser-account-form > button {
-    margin-top: 0;
-    justify-self: start;
-  }
-  .browser-address > div,
-  .browser-account {
+  .browser-address > div {
     flex-direction: column;
     align-items: stretch;
-  }
-  .browser-account-actions {
-    align-self: flex-start;
   }
 }

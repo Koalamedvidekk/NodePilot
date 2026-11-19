@@ -70,7 +70,7 @@ test('gateway authentication refresh upgrades only its managed companion without
   await writeFile(path.join(directory, 'velocity.toml'), 'retain existing configuration');
   const network = t.mock.method(globalThis, 'fetch', async () => { throw new Error('No downloads allowed'); });
   const service = new BrowserDependencyService(root);
-  assert.equal((await service.refreshAuthCompanion(id)).version, '0.1.2');
+  assert.equal((await service.refreshAuthCompanion(id)).version, '0.1.3');
   assert.equal(createHash('sha256').update(await readFile(target)).digest('hex'), BROWSER_AUTH_JAR_SHA256);
   await service.refreshAuthCompanion(id);
   assert.equal(network.mock.callCount(), 0);

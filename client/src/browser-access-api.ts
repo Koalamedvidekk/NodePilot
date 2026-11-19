@@ -1,18 +1,10 @@
 import { request } from "./api";
 
-export interface BrowserAccount {
-  id: string;
-  name: string;
-  uuid: string;
-  createdAt: string;
-  revokedAt: string | null;
-}
-
 export interface BrowserAccessStatus {
   serverId: string;
   configured: boolean;
   enabled: boolean;
-  requirePassword?: boolean;
+  needsOpenEnable?: boolean;
   status:
     | "disabled"
     | "preparing"
@@ -65,23 +57,4 @@ export const browserAccessApi = {
     post<BrowserAccessStatus>(`${base(serverId)}/enable`, { confirm: true }),
   disable: (serverId: string) =>
     post<BrowserAccessStatus>(`${base(serverId)}/disable`, { confirm: true }),
-  settings: (serverId: string, requirePassword: boolean) =>
-    post<BrowserAccessStatus>(`${base(serverId)}/settings`, { confirm: true, requirePassword }),
-  accounts: (serverId: string) =>
-    request<{ accounts: BrowserAccount[] }>(`${base(serverId)}/accounts`),
-  createAccount: (serverId: string, name: string, password: string) =>
-    post<{ account: BrowserAccount }>(`${base(serverId)}/accounts`, {
-      name,
-      password,
-    }),
-  resetPassword: (serverId: string, accountId: string, password: string) =>
-    post<{ account: BrowserAccount }>(
-      `${base(serverId)}/accounts/${encodeURIComponent(accountId)}/password`,
-      { password },
-    ),
-  revokeAccount: (serverId: string, accountId: string) =>
-    request<{ ok: true }>(
-      `${base(serverId)}/accounts/${encodeURIComponent(accountId)}`,
-      { method: "DELETE" },
-    ),
 };

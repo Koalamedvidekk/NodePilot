@@ -1,5 +1,5 @@
 // Run after npm run build. API fixtures exercise panel behavior without
-// downloading gateways, starting Minecraft, or changing real player accounts.
+// downloading gateways or starting Minecraft.
 import assert from "node:assert/strict";
 import { createReadStream, existsSync } from "node:fs";
 import { createServer } from "node:http";
@@ -34,7 +34,6 @@ await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${fixture.address().port}`;
 const serverId = "22222222-3333-4444-5555-666666666666";
 const apiBase = `/api/servers/${serverId}/browser-access`;
-const accountId = "aaaaaaaa-bbbb-4444-8888-111111111111";
 const preview = {
   revision: "fixture-revision",
   changes: [
@@ -55,7 +54,7 @@ const initial = {
   capabilities: {
     available: true,
     reasons: [],
-    targetClients: ["Eaglercraft 1.8", "Eaglercraft 1.12.2"],
+    targetClients: ["Eaglercraft 26.3 (EaglerX protocol v5)"],
     verified: false,
   },
   versions: {},
@@ -71,7 +70,7 @@ try {
       ? { executablePath: process.env.NODEPILOT_CHROMIUM_EXECUTABLE }
       : {}),
   });
-  for (const scenario of ["workflow", "unsupported", "running"]) {
+  for (const scenario of ["workflow", "unsupported", "running", "previouslyProtected"]) {
     const context = await browser.newContext({
       viewport:
         scenario === "workflow"
@@ -90,13 +89,16 @@ try {
         });
       });
       let status = structuredClone(initial);
-      let accounts = [];
+      const unexpectedGatewayRequests = [];
       let inspectRequests = 0;
       let setupRequests = 0;
-      let resetRequests = 0;
-      let revokeRequests = 0;
       let enableRequests = 0;
       let failedInspect = true;
+      if (scenario === "previouslyProtected") {
+        status.configured = true;
+        status.needsOpenEnable = true;
+        status.status = "ready";
+      }
       if (scenario === "unsupported")
         status.capabilities = {
           available: false,
@@ -134,7 +136,7 @@ try {
               id: serverId,
               name: "Browser test",
               software: scenario === "unsupported" ? "bedrock" : "paper",
-              version: "1.21.4",
+              version: "26.3",
               port: 25565,
               status: scenario === "running" ? "running" : "offline",
               installState: "ready",
@@ -233,44 +235,9 @@ try {
             publicAddress: null,
           };
           body = status;
-        } else if (url.pathname === `${apiBase}/settings`) {
-          assert.equal(method, "POST");
-          const input = request.postDataJSON();
-          assert.equal(input.confirm, true);
-          assert.equal(typeof input.requirePassword, "boolean");
-          status = { ...status, requirePassword: input.requirePassword };
-          body = status;
-        } else if (url.pathname === `${apiBase}/accounts`) {
-          if (method === "POST") {
-            assert.deepEqual(request.postDataJSON(), {
-              name: "alex",
-              password: "1234",
-            });
-            accounts = [
-              {
-                id: accountId,
-                name: "np_alex",
-                uuid: "bbbbbbbb-cccc-4444-9999-111111111111",
-                createdAt: new Date().toISOString(),
-                revokedAt: null,
-              },
-            ];
-            body = { account: accounts[0] };
-          } else body = { accounts };
-        } else if (
-          url.pathname === `${apiBase}/accounts/${accountId}/password`
-        ) {
-          assert.equal(method, "POST");
-          assert.deepEqual(request.postDataJSON(), {
-            password: "abcd",
-          });
-          resetRequests += 1;
-          body = { account: accounts[0] };
-        } else if (url.pathname === `${apiBase}/accounts/${accountId}`) {
-          assert.equal(method, "DELETE");
-          revokeRequests += 1;
-          accounts = [{ ...accounts[0], revokedAt: new Date().toISOString() }];
-          body = { ok: true };
+        } else if (url.pathname.startsWith(apiBase + "/")) {
+          unexpectedGatewayRequests.push(url.pathname);
+          return route.fulfill({ status: 404, json: { error: "not_found" } });
         }
         await route.fulfill({
           contentType: "application/json",
@@ -285,29 +252,18 @@ try {
       if (scenario === "unsupported") {
         await page.getByText("Bedrock uses UDP.", { exact: false }).waitFor();
         assert.equal(await setup.isDisabled(), true);
-        assert.equal(
-          await page
-            .getByRole("button", { name: "Create Account", exact: true })
-            .count(),
-          0,
-        );
+      } else if (scenario === "previouslyProtected") {
+        const enable = page.getByRole("button", { name: "Enable public access", exact: true });
+        await enable.waitFor();
+        assert.equal(await enable.isEnabled(), true);
+        assert.equal(await page.getByRole("button", { name: "Copy Address" }).count(), 0);
+        assert.equal(enableRequests, 0);
       } else if (scenario === "running") {
         await page
           .getByText("Stop Minecraft before setting up, enabling, or disabling browser access.", { exact: true })
           .waitFor();
         assert.equal(await setup.isDisabled(), true);
         assert.equal(setupRequests, 0);
-        assert.equal(
-          await page
-            .getByRole("button", { name: "Create Account", exact: true })
-            .isDisabled(),
-          true,
-        );
-        await page
-          .getByText("Stop Minecraft before creating a browser account", {
-            exact: false,
-          })
-          .waitFor();
       } else {
         await page
           .getByText("Experimental browser compatibility", { exact: true })
@@ -345,50 +301,6 @@ try {
           .waitFor();
         assert.equal(setupRequests, 1);
         assert.equal(inspectRequests, 2);
-        const passwords = page.getByRole("checkbox", { name: "Require NodePilot browser passwords", exact: true });
-        assert.equal(await passwords.isChecked(), true);
-        page.once("dialog", dialog => dialog.accept());
-        await passwords.click();
-        await page.getByText("Open access: players join without a NodePilot password.", { exact: false }).waitFor();
-        assert.equal(await passwords.isChecked(), false);
-        page.once("dialog", dialog => dialog.accept());
-        await passwords.click();
-        await page.getByText("Players use their NodePilot browser account and password.", { exact: false }).waitFor();
-        assert.equal(
-          await page
-            .getByRole("button", { name: "Review Setup", exact: true })
-            .count(),
-          0,
-        );
-        await page
-          .getByRole("textbox", { name: "Browser username", exact: true })
-          .fill("alex");
-        await page
-          .getByLabel("Account password", { exact: true })
-          .fill("1234");
-        await page
-          .getByRole("button", { name: "Create Account", exact: true })
-          .click();
-        await page.getByText("np_alex", { exact: true }).waitFor();
-        assert.equal(
-          await page
-            .getByLabel("Account password", { exact: true })
-            .inputValue(),
-          "",
-        );
-        await page
-          .getByRole("button", { name: "Reset Password", exact: true })
-          .click();
-        await page
-          .getByLabel("New password for np_alex", { exact: true })
-          .fill("abcd");
-        await page
-          .getByRole("button", { name: "Save Password", exact: true })
-          .click();
-        await page
-          .getByText("Browser password reset.", { exact: false })
-          .waitFor();
-        assert.equal(resetRequests, 1);
         await page.getByRole("button", { name: "Enable", exact: true }).click();
         await page
           .getByRole("alert")
@@ -401,6 +313,9 @@ try {
           exact: true,
         });
         await address.waitFor();
+        await page.getByText(/Eaglercraft 26\.3 \(EaglerX protocol v5\)/).waitFor();
+        assert.equal(await page.locator('input[type="password"]').count(), 0);
+        assert.equal(await page.getByRole("heading", { name: "Browser accounts", exact: true }).count(), 0);
         assert.equal(enableRequests, 2);
         assert.equal(
           await address.inputValue(),
@@ -419,15 +334,6 @@ try {
             path: process.env.NODEPILOT_BROWSER_UI_SCREENSHOT,
             fullPage: true,
           });
-        page.once("dialog", (dialog) => dialog.dismiss());
-        await page.getByRole("button", { name: "Revoke", exact: true }).click();
-        assert.equal(revokeRequests, 0);
-        page.once("dialog", (dialog) => dialog.accept());
-        await page.getByRole("button", { name: "Revoke", exact: true }).click();
-        await page
-          .getByText("np_alex can no longer log in.", { exact: true })
-          .waitFor();
-        assert.equal(revokeRequests, 1);
         page.once("dialog", (dialog) => dialog.accept());
         await page
           .getByRole("button", { name: "Disable", exact: true })
@@ -443,6 +349,7 @@ try {
         );
       }
       assert.deepEqual(errors, []);
+      assert.deepEqual(unexpectedGatewayRequests, [], "Gateway setup and joining must work with only the gateway API.");
       console.log(`PASS browser players ${scenario}`);
     } finally {
       await context.close();

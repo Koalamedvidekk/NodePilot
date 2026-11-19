@@ -38,8 +38,8 @@ jobs:
         run: npx tsx --test server/test/playit-link.test.ts
       - name: Test template bundles, rollback and recovery on Windows
         run: npx tsx --test server/test/server-templates.test.ts server/test/template-bundles.test.ts
-      - name: Test browser accounts, setup, routing and recovery on Windows
-        run: npx tsx --test server/test/browser-accounts.test.ts server/test/browser-access.test.ts server/test/browser-dependencies.test.ts server/test/browser-wake.test.ts
+      - name: Test browser identities, setup, routing and recovery on Windows
+        run: npx tsx --test server/test/browser-identities.test.ts server/test/browser-access.test.ts server/test/browser-dependencies.test.ts server/test/browser-wake.test.ts
       - name: Build and verify the compiled APIs
         run: |
           npm run build -w server
@@ -82,7 +82,7 @@ jobs:
           distribution: temurin
           java-version: 25
 
-      - name: Compile and test the browser authentication companion
+      - name: Compile and test the browser gateway companion
         run: node companion/nodepilot-velocity-auth/build.mjs --check
 
       - name: Type-check
@@ -106,7 +106,7 @@ jobs:
       - name: Verify Forge directory and ZIP imports through the compiled API
         run: node scripts/test-import-api.mjs
 
-      - name: Verify browser account and gateway APIs
+      - name: Verify browser gateway APIs
         run: node scripts/test-browser-access-api.mjs
 
       - name: Verify browser flows

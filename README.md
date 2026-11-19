@@ -210,54 +210,31 @@ For automatic startup when a player joins and Minecraft startup notices, see the
 
 ## Browser Players
 
-Open a server and choose **Browser Players** to prepare an Eaglercraft gateway.
-The pinned gateway targets known stable Paper/Purpur releases from 1.19 through
-26.3, including 26.1/26.1.1/26.1.2 and 26.2. It accepts Eaglercraft 1.8/1.12.2
-clients and EaglerX protocol-v5 clients using Minecraft 26.3. The browser client
-must support an editable profile name. Password-protected mode also requires
-support for the NodePilot password prompt.
-New setups require **Java 25 or newer**, including on older Minecraft backends.
-Other software, snapshots and unknown future releases show an availability reason.
-Browser compatibility remains experimental; see the
+Browser Players gives your server a public `wss://` address for Eaglercraft.
+The current EaglerX gateway supports the 26.3 client (protocol v5) and targets
+stable Paper/Purpur backends from 1.19 through 26.3. Check **Browser Players**
+for the clients and Minecraft versions available with your installed gateway.
+New setups require **Java 25 or newer**.
+
+1. Stop Minecraft and open **Browser Players → Set Up**. NodePilot checks Java and downloads the gateway components.
+2. Review the configuration preview and choose **Approve & Apply Setup**. NodePilot backs up the affected files, moves the Minecraft backend to a private listener, and routes Java connections through Velocity.
+3. Choose **Enable**, wait for the gateway address, and start Minecraft normally.
+4. Choose **Copy Address**. In Eaglercraft 26.3, open **Multiplayer**, paste the address, and join using your player name.
+
+Players join without a NodePilot account or password. Browser names are
+self-selected. Install a compatible Minecraft login plugin if you want to verify
+who owns each name. New players can choose 1–16 letters, numbers or underscores.
+Returning players should use the same name to keep their progress. Existing
+browser identities keep their stored name and UUID. Java players can use their
+existing game address.
+
+After upgrading a gateway that previously required NodePilot passwords, stop
+Minecraft and choose **Enable public access** to share it without a password.
+
+If the panel says an older gateway needs an upgrade for 26.3, stop Minecraft,
+choose **Disable**, and repeat setup. Copy the new address after enabling it.
+Browser compatibility varies between client builds.
 [26.3 verification report](docs/testing/browser-26.3-2026-11-16.md).
-
-Existing configured gateways retain their components and accounts. To upgrade one
-for 26.3 browser clients, stop Minecraft, choose **Disable**, then **Set Up** and
-approve the new gateway configuration. Choose **Enable** and share its new address.
-This preserves the world's files and browser account UUIDs.
-
-Stop Minecraft, choose **Set Up**, and wait for the verified gateway components
-to download. Review the connection and authentication changes, select the
-approval checkbox, and choose **Approve & Apply Setup**. Setup backs up the
-affected configuration, moves the Minecraft backend to a private listener, and
-delegates normal Java authentication to a managed Velocity proxy. Choose
-**Enable** to start the gateway and temporary tunnel.
-
-Create a browser account for each player, then share its prefixed `np_` name,
-password, and the copied `wss://` address privately. Players first set their
-Eaglercraft profile username to that full `np_` name, enter the address in the
-multiplayer screen, and provide the password when prompted. Use a client that
-allows setting its profile name. Browser accounts use
-separate stable UUIDs and progress. Owners can reset passwords and revoke access
-in this tab. Ordinary Java players continue using the server's existing public
-game address through the managed proxy.
-
-For clients that do not show a password prompt, stop Minecraft and turn off
-**Require NodePilot browser passwords** under **Browser login**. Confirm the
-change and wait for the gateway to restart, then copy its new address. Players
-can join without creating a NodePilot account, using 1–13 letters, numbers or
-underscores (optionally prefixed with `np_`). Their name and UUID remain stable
-across reconnects; existing browser accounts keep their UUID and progress.
-Revoked account names remain blocked. In open mode anyone can use an unrevoked
-browser name; install a compatible server login plugin if you want to protect
-player identities. Switching back to password mode requires registered accounts.
-Creating an account for an existing open player preserves that player's UUID.
-This setting does not change normal Java authentication or backend protection.
-
-Browser account passwords accept **4–127 characters**, within the client's
-255-byte UTF-8 limit. Existing passwords keep working. NodePilot updates its own
-authentication companion before the gateway next starts, preserving accounts,
-gateway configuration and third-party components.
 
 Cloudflare Quick Tunnels supply temporary public addresses without requiring an
 account or port forwarding. The address changes when the tunnel restarts.

@@ -29,7 +29,7 @@ import {
 } from "../lib/java-properties.js";
 import { resolveManagedServerRoot } from "../lib/paths.js";
 import { minecraftReleaseProtocol } from "../lib/minecraft-protocol-version.js";
-import { BrowserAccountRepository } from "../repositories/browser-account-repository.js";
+import { BrowserIdentityRepository, type ReservedBrowserIdentity } from "../repositories/browser-identity-repository.js";
 import type { ServerRepository } from "../repositories/server-repository.js";
 import type { ServerRecord } from "../types.js";
 import type { JavaService } from "./java-service.js";
@@ -55,7 +55,8 @@ interface Preview {
 interface BrowserRecord {
   configured: boolean;
   enabled: boolean;
-  requirePassword?: boolean;
+  requirePassword?: boolean; // Legacy protection setting used only during upgrade.
+  needsOpenEnable?: boolean;
   backendPort: number;
   wakePort: number;
   gatewayPort: number;
@@ -123,7 +124,7 @@ function equalToken(left: string, right: string): boolean {
 
 /** Owns only gateway processes launched by this instance. No persisted PID is ever killed. */
 export class BrowserAccessService {
-  readonly accounts: BrowserAccountRepository;
+  private readonly identities: BrowserIdentityRepository;
   readonly connections: GameConnectionResolver;
   private readonly operations = new Map<string, Operation>();
   private readonly busy = new Set<string>();
@@ -144,8 +145,25 @@ export class BrowserAccessService {
     database.exec(
       `CREATE TABLE IF NOT EXISTS browser_access (server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE, payload TEXT NOT NULL)`,
     );
-    this.accounts = new BrowserAccountRepository(database);
+    this.identities = new BrowserIdentityRepository(database);
+    this.migrateLegacyGateways();
     this.connections = new GameConnectionResolver((id) => this.ports(id));
+  }
+
+  private migrateLegacyGateways(): void {
+    this.database.transaction(() => {
+      const rows = this.database.prepare("SELECT server_id, payload FROM browser_access").all() as Array<{ server_id: string; payload: string }>;
+      for (const row of rows) {
+        const record = JSON.parse(row.payload) as BrowserRecord;
+        if (record.requirePassword === false) continue;
+        // A formerly private public tunnel needs an explicit Enable before exposing guest access.
+        record.needsOpenEnable = record.configured && record.enabled;
+        record.enabled = false;
+        record.requirePassword = false;
+        record.preview = null;
+        this.save(row.server_id, record);
+      }
+    })();
   }
 
   private record(id: string): BrowserRecord | null {
@@ -292,7 +310,8 @@ export class BrowserAccessService {
       serverId: id,
       configured: record?.configured ?? false,
       enabled: record?.enabled ?? false,
-      requirePassword: record?.requirePassword !== false,
+      requirePassword: false,
+      needsOpenEnable: record?.needsOpenEnable === true,
       status: this.hasRecoveryBlock(id)
         ? "recovery_required"
         : operation.error
@@ -418,7 +437,7 @@ export class BrowserAccessService {
     const record: BrowserRecord = {
       configured: false,
       enabled: false,
-      requirePassword: this.record(server.id)?.requirePassword !== false,
+      requirePassword: false,
       backendPort: await allocate(),
       wakePort: await allocate(),
       gatewayPort: await allocate(),
@@ -439,13 +458,13 @@ export class BrowserAccessService {
       revision: this.revision(server, record.files),
       changes: [
         `Move Minecraft to the private loopback port ${record.backendPort}. Keep Java joins on port ${server.port} through Velocity.`,
-        "Verify Java accounts at the proxy and require local passwords for browser accounts.",
+        "Allow Eaglercraft players to join with their client name. Java players sign in through Velocity.",
         "Enable BungeeGuard forwarding and install its verified backend plugin.",
         "Expose the game gateway using a temporary Cloudflare WSS tunnel when enabled.",
       ],
       warnings: [
         "Experimental. A playable browser connection has not been verified for this combination.",
-        "Enabling changes authentication and networking configuration. Browser identities have separate UUIDs and player progress.",
+        "The public WSS address accepts guest players. Use a server login plugin if you want to protect player names.",
         "Temporary Cloudflare addresses change after tunnel restarts and have no uptime guarantee.",
       ],
     };
@@ -668,26 +687,33 @@ export class BrowserAccessService {
     await writeConfiguration(
       root,
       "plugins/eaglerxserver/settings.toml",
-      "enable_authentication_events = true\n[protocols]\nprotocol_v5_allowed = true\nmax_minecraft_protocol_v5 = 777\n",
+      "enable_authentication_events = false\n[protocols]\nprotocol_v5_allowed = true\nmax_minecraft_protocol_v5 = 777\n",
     );
     await writeConfiguration(
       root,
       "plugins/eaglerxserver/listeners.toml",
       `[[listener_list]]\nlistener_name = "nodepilot"\ninject_address = "0.0.0.0:${server.port}"\nvelocity_clone_listener = false\ndual_stack = true\nforward_secret = true\nforward_secret_header = "X-Eagler-Secret"\nforward_secret_file = "eagler_forwarding.secret"\n`,
     );
-    await this.writeAuthenticationConfiguration(server.id, record);
+    await this.writeProfileConfiguration(server.id, record);
   }
 
-  private async writeAuthenticationConfiguration(id: string, record: BrowserRecord): Promise<void> {
+  private async writeProfileConfiguration(id: string, record: BrowserRecord): Promise<void> {
     if (!record.installed) throw new Error("Browser dependencies are missing.");
+    const root = record.installed.directory;
+    const eaglerSettings = "plugins/eaglerxserver/settings.toml";
+    const current = await readConfiguration(root, eaglerSettings);
+    if (current !== null) {
+      // Older NodePilot releases enabled the EaglerX password-event pipeline.
+      const updated = current.replace(/^([ \t]*enable_authentication_events[ \t]*=[ \t]*)true\b/m, "$1false");
+      if (updated !== current) await writeConfiguration(root, eaglerSettings, updated);
+    }
     await writeConfiguration(
       record.installed.directory,
       "plugins/nodepilot-browser-auth/config.json",
       JSON.stringify({
         serverId: id,
-        verifyUrl: `http://127.0.0.1:${record.authPort}/verify`,
+        profileUrl: `http://127.0.0.1:${record.authPort}/open`,
         token: record.bridgeToken,
-        requirePassword: record.requirePassword !== false,
       }),
     );
   }
@@ -736,6 +762,7 @@ export class BrowserAccessService {
         "Set up Browser Players first.",
       );
     record.enabled = true;
+    record.needsOpenEnable = false;
     this.save(id, record);
     this.operation(id).error = null;
     const task = this.ensureOnline(id).catch((error: unknown) => {
@@ -744,40 +771,6 @@ export class BrowserAccessService {
     });
     this.tasks.add(task);
     void task.finally(() => this.tasks.delete(task));
-    return this.status(id);
-  }
-
-  async updateSettings(id: string, requirePassword: boolean) {
-    this.requireStopped(id);
-    this.assertCanStart(id);
-    const record = this.record(id);
-    if (!record?.configured) throw new AppError(409, "browser_not_configured", "Set up Browser Players first.");
-    if (this.launches.has(id)) throw new AppError(409, "browser_operation_in_progress", "Wait for the browser gateway to finish starting.");
-    if ((record.requirePassword !== false) === requirePassword) return this.status(id);
-    // SQLite is authoritative; every launch rewrites only our companion's config.
-    // A crash after saving cannot bring back the previous authentication mode.
-    record.requirePassword = requirePassword;
-    this.save(id, record);
-    this.busy.add(id);
-    const operation = this.operation(id);
-    operation.error = null;
-    operation.phase = "Applying browser login settings and restarting the gateway";
-    operation.progressPercent = null;
-    const task = (async () => {
-      await this.stopOwned(id);
-      await this.writeAuthenticationConfiguration(id, record);
-      if (record.enabled && !this.stopping) await this.ensureOnline(id);
-      this.log(id, requirePassword ? "NodePilot browser passwords are required." : "Open browser access enabled. NodePilot passwords are not required.");
-      operation.phase = "Browser login settings applied";
-      operation.progressPercent = 100;
-    })().catch((error: unknown) => {
-      operation.error = errorMessage(error);
-      this.log(id, operation.error);
-    }).finally(() => {
-      this.busy.delete(id);
-      this.tasks.delete(task);
-    });
-    this.tasks.add(task);
     return this.status(id);
   }
 
@@ -815,13 +808,13 @@ export class BrowserAccessService {
     };
     this.running.set(id, live);
     try {
-      this.operation(id).phase = "Starting the authenticated browser gateway";
+      this.operation(id).phase = "Starting the EaglerX browser gateway";
       const authentication = await this.dependencies.refreshAuthCompanion(id);
       record.installed.authPluginJar = authentication.path;
       record.installed.versions["nodepilot-browser-auth"] = authentication.version;
       this.save(id, record);
       if (live.stopping || this.stopping) throw new Error("Browser gateway startup was cancelled.");
-      await this.writeAuthenticationConfiguration(id, record);
+      await this.writeProfileConfiguration(id, record);
       await this.authListener(id, record, live);
       const velocity = await this.launchProcess(
         id,
@@ -829,10 +822,10 @@ export class BrowserAccessService {
         record.javaPath,
         ["-Xms64M", "-Xmx256M", "-jar", record.installed.velocityJar],
         record.installed.directory,
-        /NODEPILOT_BROWSER_AUTH_READY[\s\S]*Done \(/,
+        /NODEPILOT_BROWSER_GATEWAY_READY[\s\S]*Done \(/,
       );
       if (!velocity || live.stopping || this.stopping)
-        throw new Error("The authenticated gateway startup was cancelled.");
+        throw new Error("The browser gateway startup was cancelled.");
       await this.refreshRouting(id);
       await this.gatewayListener(server, record, live);
       const tunnelOutput = await this.launchProcess(
@@ -1028,11 +1021,13 @@ export class BrowserAccessService {
     record: BrowserRecord,
     live: Running,
   ): Promise<void> {
+    let attempts = 0;
+    let windowEndsAt = 0;
     const listener = createServer((request, response) => {
       response.setHeader("Cache-Control", "no-store");
       if (
         request.method !== "POST" ||
-        !["/verify", "/open"].includes(request.url ?? "") ||
+        request.url !== "/open" ||
         request.socket.remoteAddress !== "127.0.0.1" ||
         !equalToken(
           request.headers.authorization ?? "",
@@ -1057,41 +1052,25 @@ export class BrowserAccessService {
             response.writeHead(403).end();
             return;
           }
-          const body = JSON.parse(input) as {
-            name?: unknown;
-            password?: unknown;
-          };
-          const open = request.url === "/open";
-          if (typeof body.name !== "string" || (!open && typeof body.password !== "string")) {
+          const body = JSON.parse(input) as { name?: unknown } | null;
+          if (!body || typeof body.name !== "string" || !/^[A-Za-z0-9_]{1,16}$/.test(body.name)) {
             response.writeHead(400).end();
             return;
           }
-          // Re-read the persisted setting: a stale gateway cannot bypass passwords.
-          if (open && this.record(id)?.requirePassword !== false) {
-            response.writeHead(403).end();
+          const now = Date.now();
+          if (now >= windowEndsAt) {
+            attempts = 0;
+            windowEndsAt = now + 60_000;
+          }
+          if (++attempts > 120) {
+            response.writeHead(429).end();
             return;
           }
-          const identity = open
-            ? this.accounts.resolveOpenIdentity(id, body.name, await this.reservedIdentities(id))
-            : await this.accounts.verify(id, body.name, body.password as string);
-          const reserved = identity ? await this.reservedIdentities(id) : [];
-          if (
-            identity &&
-            reserved.some(
-              (entry) =>
-                (entry.uuid?.toLowerCase() === identity.uuid.toLowerCase() &&
-                  entry.name.toLowerCase() !== identity.name.toLowerCase()) ||
-                (entry.name.toLowerCase() === identity.name.toLowerCase() &&
-                  entry.uuid?.toLowerCase() !== identity.uuid.toLowerCase()),
-            )
-          ) {
-            response.writeHead(403).end();
-            return;
-          }
+          const identity = this.identities.resolve(id, body.name, await this.reservedIdentities(id));
           if (identity && !live.stopping) {
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ ok: true, ...identity }));
-          } else response.writeHead(403).end();
+          } else response.writeHead(live.stopping ? 503 : 409).end();
         })().catch(() => {
           if (!response.headersSent) response.writeHead(403);
           response.end();
@@ -1463,13 +1442,13 @@ export class BrowserAccessService {
   }
   async reservedIdentities(
     id: string,
-  ): Promise<Array<{ name: string; uuid?: string }>> {
+  ): Promise<ReservedBrowserIdentity[]> {
     const server = this.servers.require(id);
     const root = await resolveManagedServerRoot(
       this.options.serversDirectory,
       server.directory,
     );
-    const result: Array<{ name: string; uuid?: string }> = [];
+    const result: ReservedBrowserIdentity[] = [];
     for (const relative of ["ops.json", "whitelist.json", "usercache.json"]) {
       const text = await readConfiguration(root, relative);
       if (!text) continue;
@@ -1494,23 +1473,10 @@ export class BrowserAccessService {
           result.push({
             name: entry.name,
             uuid: typeof entry.uuid === "string" ? entry.uuid : undefined,
+            operator: relative === "ops.json",
           });
     }
     return result;
   }
 
-  async createAccount(id: string, input: { name: string; password: string }) {
-    this.requireStopped(id);
-    this.assertCanStart(id);
-    this.busy.add(id);
-    try {
-      return await this.accounts.create(
-        id,
-        input,
-        await this.reservedIdentities(id),
-      );
-    } finally {
-      this.busy.delete(id);
-    }
-  }
 }

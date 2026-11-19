@@ -30,8 +30,6 @@ const bedrockId = "12345678-1234-4234-8234-123456789abe";
 const modernId = "12345678-1234-4234-8234-123456789abf";
 const futureId = "12345678-1234-4234-8234-123456789ac0";
 const pin = "browser-api-fixture-pin";
-const password = "Ab!4";
-const replacementPassword = "Cd@5";
 const route = (id) => "/servers/" + id + "/browser-access";
 let child;
 let database;
@@ -74,8 +72,6 @@ async function stopChild() {
 function privateFieldsAbsent(body) {
   const json = JSON.stringify(body, (key, value) => key === "requirePassword" && typeof value === "boolean" ? undefined : value);
   assert.doesNotMatch(json, /"[^"]*(?:password|hash|salt|token)[^"]*"\s*:/i);
-  assert.equal(json.includes(password), false);
-  assert.equal(json.includes(replacementPassword), false);
 }
 
 try {
@@ -135,11 +131,6 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
   const { ServerRepository } = await import(
     pathToFileURL(
       path.join(root, "server/dist/repositories/server-repository.js"),
-    ).href
-  );
-  const { BrowserAccountRepository } = await import(
-    pathToFileURL(
-      path.join(root, "server/dist/repositories/browser-account-repository.js"),
     ).href
   );
   database = openDatabase(path.join(dataDirectory, "nodepilot.sqlite"));
@@ -287,10 +278,10 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
   );
   assert.equal(
     (
-      await request(route(serverId) + "/accounts", {
+      await request(route(serverId) + "/enable", {
         method: "POST",
         authenticated: false,
-        body: { name: "alex", password },
+        body: { confirm: true },
       })
     ).status,
     401,
@@ -299,6 +290,7 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
   assert.equal(result.status, 200);
   assert.equal(result.body.configured, false);
   assert.equal(result.body.enabled, false);
+  assert.equal(result.body.requirePassword, false);
   assert.equal(result.body.status, "disabled");
   assert.equal(result.body.publicAddress, null);
   assert.equal(result.body.localAddress, null);
@@ -358,127 +350,24 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
     "PASS compiled Browser Players API enforces PIN, default disabled state, explicit confirmation, and availability gates",
   );
 
-  const accountsRoute = route(serverId) + "/accounts";
-  assert.equal(
-    (
-      await request(accountsRoute, {
-        method: "POST",
-        body: { name: "alex", password: "abc" },
-      })
-    ).status,
-    400,
-  );
-  assert.equal(
-    (
-      await request(accountsRoute, {
-        method: "POST",
-        body: { name: "../alex", password },
-      })
-    ).status,
-    400,
-  );
-  assert.equal(
-    (
-      await request(accountsRoute, {
-        method: "POST",
-        body: { name: "admin", password },
-      })
-    ).status,
-    409,
-  );
-  result = await request(accountsRoute, {
-    method: "POST",
-    body: { name: "alex", password },
-  });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  const account = result.body.account;
-  assert.equal(account.name, "np_alex");
-  assert.match(account.uuid, /^[0-9a-f-]{36}$/);
-  assert.equal(account.serverId, serverId);
-  privateFieldsAbsent(result.body);
-  assert.equal(
-    (
-      await request(accountsRoute, {
-        method: "POST",
-        body: { name: "ALEX", password },
-      })
-    ).status,
-    409,
-  );
-  result = await request(accountsRoute);
-  assert.deepEqual(result.body.accounts, [account]);
-  privateFieldsAbsent(result.body);
-  assert.deepEqual(
-    (await request(route(otherId) + "/accounts")).body.accounts,
-    [],
-  );
-  assert.equal(
-    (
-      await request(route(otherId) + "/accounts/" + account.id + "/password", {
-        method: "POST",
-        body: { password: replacementPassword },
-      })
-    ).status,
-    404,
-  );
-  assert.equal(
-    (
-      await request(route(otherId) + "/accounts/" + account.id, {
-        method: "DELETE",
-      })
-    ).status,
-    404,
-  );
+  const formerAccount = "/accounts/aaaaaaaa-bbbb-4444-8888-111111111111";
+  for (const [method, suffix, body] of [
+    ["GET", "/accounts"],
+    ["POST", "/accounts", { name: "alex", password: "unused" }],
+    ["POST", formerAccount + "/password", { password: "unused" }],
+    ["DELETE", formerAccount],
+    ["POST", "/settings", { confirm: true, requirePassword: true }],
+  ]) {
+    const removed = await request(route(serverId) + suffix, { method, body });
+    assert.equal(removed.status, 404, method + " " + suffix);
+  }
+  console.log("PASS browser access exposes no account-management or password-setting routes");
 
   database = openDatabase(path.join(dataDirectory, "nodepilot.sqlite"));
-  const accountRepository = new BrowserAccountRepository(database);
-  assert.deepEqual(
-    await accountRepository.verify(serverId, account.name, password),
-    { name: account.name, uuid: account.uuid },
-  );
-  assert.equal(
-    await accountRepository.verify(otherId, account.name, password),
-    null,
-  );
-  result = await request(accountsRoute + "/" + account.id + "/password", {
-    method: "POST",
-    body: { password: replacementPassword },
-  });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.account.uuid, account.uuid);
-  privateFieldsAbsent(result.body);
-  assert.equal(
-    await accountRepository.verify(serverId, account.name, password),
-    null,
-  );
-  assert.deepEqual(
-    await accountRepository.verify(serverId, account.name, replacementPassword),
-    { name: account.name, uuid: account.uuid },
-  );
-  assert.equal(
-    (await request(accountsRoute + "/" + account.id, { method: "DELETE" }))
-      .status,
-    200,
-  );
-  assert.equal(
-    await accountRepository.verify(serverId, account.name, replacementPassword),
-    null,
-  );
-  result = await request(accountsRoute);
-  assert.ok(result.body.accounts[0].revokedAt);
-  privateFieldsAbsent(result.body);
-  console.log(
-    "PASS real account APIs preserve stable identity, isolate servers, reject operator collisions, and apply password reset/revocation",
-  );
-
   new ServerRepository(database).setStatus(serverId, "running");
   result = await request(route(serverId) + "/inspect", { method: "POST" });
   assert.equal(result.status, 409, JSON.stringify(result.body));
   assert.equal(result.body.error, "server_active");
-  result = await request(accountsRoute, { method: "POST", body: { name: "sleeping", password } });
-  assert.equal(result.status, 409, JSON.stringify(result.body));
-  assert.equal(result.body.error, "server_active");
-  assert.equal(accountRepository.list(serverId).length, 1);
   new ServerRepository(database).setStatus(serverId, "offline");
   result = await request(route(serverId));
   assert.equal(result.body.status, "disabled");
@@ -528,9 +417,9 @@ process.on('message', message => { if (message === 'test-shutdown') process.emit
   assert.equal(result.body.error, "untrusted_origin");
   assert.equal(
     (
-      await request(accountsRoute, {
+      await request(route(serverId) + "/enable", {
         method: "POST",
-        body: { name: "remote", password },
+        body: { confirm: true },
         authenticated: false,
         origin: "https://untrusted.example",
       })

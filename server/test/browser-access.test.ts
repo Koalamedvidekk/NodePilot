@@ -108,7 +108,7 @@ async function fixture(t: TestContext, options: { missingYaml?: boolean; downloa
     authPluginJar: path.join(dependenciesRoot, 'plugins/NodePilotBrowserAuth.jar'), javaMajor: 25,
     versions: { velocity: '4.3.1-45', eaglerxserver: 'fixture', cloudflared: 'fixture' } };
   let installations = 0;
-  const dependencies = { refreshAuthCompanion: async () => ({ path: installed.authPluginJar, version: '0.1.1' }), install: async () => {
+  const dependencies = { refreshAuthCompanion: async () => ({ path: installed.authPluginJar, version: '0.1.3' }), install: async () => {
     installations += 1;
     if (options.downloadError) throw new Error('The official download failed its SHA-256 integrity check.');
     await mkdir(path.dirname(installed.bungeeGuardJar), { recursive: true });
@@ -185,7 +185,10 @@ test('26.3 setup pins the real backend protocol and enables bounded protocol-v5 
   const via = parse(await readFile(path.join(state.installed.directory, 'plugins/viaversion/config.yml'), 'utf8'));
   assert.deepEqual(via['velocity-servers'], { default: 777, nodepilot: 777 });
   const settings = await readFile(path.join(state.installed.directory, 'plugins/eaglerxserver/settings.toml'), 'utf8');
-  assert.match(settings, /enable_authentication_events = true/);
+  assert.match(settings, /enable_authentication_events = false/);
+  const velocity = await readFile(path.join(state.installed.directory, 'velocity.toml'), 'utf8');
+  assert.match(velocity, /^online-mode = true$/m);
+  assert.match(velocity, /^player-info-forwarding-mode = "bungeeguard"$/m);
   assert.match(settings, /\[protocols\]\nprotocol_v5_allowed = true\nmax_minecraft_protocol_v5 = 777/);
   await state.service.disable(serverId);
   assert.equal(parseJavaProperties(await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8'))['online-mode'], 'true');
@@ -210,6 +213,21 @@ test('previously configured gateways retain their files and explain how to upgra
   assert.ok(status.capabilities.reasons.some(reason => /Set Up again/.test(reason)));
 });
 
+test('upgrading an enabled protected gateway requires an owner to enable public WSS again', async (t) => {
+  const state = await fixture(t);
+  await state.setup();
+  const configured = state.row();
+  for (const previousMode of [true, undefined, false]) {
+    state.saveRow({ ...configured, enabled: true, requirePassword: previousMode });
+    const recovered = state.recoverService();
+    const status = await recovered.status(serverId);
+    assert.equal(status.configured, true);
+    assert.equal(status.requirePassword, false);
+    assert.equal(status.enabled, previousMode === false);
+    assert.equal(Boolean(status.needsOpenEnable), previousMode !== false);
+  }
+});
+
 test('browser inspection refuses active servers and shared maintenance before downloading anything', async (t) => {
   const state = await fixture(t);
   state.setActive(true);
@@ -224,6 +242,30 @@ test('browser inspection refuses active servers and shared maintenance before do
   assert.equal(await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8'), state.originalProperties);
 });
 
+test('starting an upgraded gateway disables saved EaglerX password events before launching the proxy', async (t) => {
+  const state = await fixture(t);
+  await state.setup();
+  const settingsFile = path.join(state.installed.directory, 'plugins/eaglerxserver/settings.toml');
+  const saved = '  enable_authentication_events  =  true  # managed\n[protocols]\nprotocol_v5_allowed = true\n';
+  await writeFile(settingsFile, saved);
+  const companionFile = path.join(state.installed.directory, 'plugins/nodepilot-browser-auth/config.json');
+  const record = state.row();
+  await writeFile(companionFile, JSON.stringify({
+    serverId, requirePassword: true, verifyUrl: `http://127.0.0.1:${record.authPort}/verify`, token: record.bridgeToken,
+  }));
+  const launcher = state.service as unknown as { launchProcess(): Promise<never> };
+  t.mock.method(launcher, 'launchProcess', async () => { throw new Error('Reached test proxy launch'); });
+  await state.service.enable(serverId);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !(await state.service.status(serverId)).error) await delay(10);
+  assert.match((await state.service.status(serverId)).error ?? '', /Reached test proxy launch/);
+  assert.equal(await readFile(settingsFile, 'utf8'), saved.replace('=  true', '=  false'));
+  const configuration = JSON.parse(await readFile(companionFile, 'utf8'));
+  assert.equal(configuration.profileUrl, `http://127.0.0.1:${record.authPort}/open`);
+  assert.equal(configuration.verifyUrl, undefined);
+  assert.equal(configuration.requirePassword, undefined);
+});
+
 test('simultaneous browser inspections acquire exclusive ownership before asynchronous preflight', async (t) => {
   const state = await fixture(t);
   const results = await Promise.allSettled([state.service.inspect(serverId), state.service.inspect(serverId)]);
@@ -234,21 +276,6 @@ test('simultaneous browser inspections acquire exclusive ownership before asynch
   while (state.service.isBusy(serverId) && Date.now() < until) await delay(10);
   assert.equal(state.service.isBusy(serverId), false);
   assert.equal(state.installations, 1);
-});
-
-test('browser account enrollment requires a stopped server and excludes starts during collision checks and hashing', async (t) => {
-  const state = await fixture(t);
-  const input = { name: 'Alex', password: 'correct-browser-password' };
-  state.setActive(true);
-  await assert.rejects(state.service.createAccount(serverId, input), { code: 'server_active' });
-  state.setActive(false);
-  const enrolling = state.service.createAccount(serverId, input);
-  assert.equal(state.service.isBusy(serverId), true);
-  assert.throws(() => state.service.assertCanStart(serverId), { code: 'browser_operation_in_progress' });
-  await assert.rejects(state.service.createAccount(serverId, input), { code: 'browser_operation_in_progress' });
-  const account = await enrolling;
-  assert.equal(account.name, 'np_Alex');
-  assert.equal(state.service.isBusy(serverId), false);
 });
 
 test('the browser enable API requires explicit JSON confirmation before starting a public tunnel', async (t) => {
@@ -265,22 +292,6 @@ test('the browser enable API requires explicit JSON confirmation before starting
   assert.equal(starts, 0);
   assert.equal((await app.inject({ method: 'POST', url, payload: { confirm: true } })).statusCode, 202);
   assert.equal(starts, 1);
-});
-
-test('browser settings API validates explicit confirmation and a boolean password requirement', async (t) => {
-  const changes: boolean[] = [];
-  const browser = { updateSettings: async (_id: string, required: boolean) => { changes.push(required); return { requirePassword: required }; } } as unknown as BrowserAccessService;
-  const app = Fastify();
-  app.setErrorHandler((error, _request, reply) => { const handled = asAppError(error); reply.code(handled.statusCode).send({ error: handled.code }); });
-  await registerBrowserAccessRoutes(app, browser, async () => {});
-  t.after(() => app.close());
-  const url = `/api/servers/${serverId}/browser-access/settings`;
-  for (const payload of [{ requirePassword: false }, { confirm: true, requirePassword: 'false' }, { confirm: false, requirePassword: false }]) {
-    assert.equal((await app.inject({ method: 'POST', url, payload })).statusCode, 400);
-  }
-  assert.deepEqual(changes, []);
-  assert.equal((await app.inject({ method: 'POST', url, payload: { confirm: true, requirePassword: false } })).statusCode, 202);
-  assert.deepEqual(changes, [false]);
 });
 
 test('failed browser dependency verification and missing Java leave the original server configuration intact', async (t) => {
@@ -587,65 +598,43 @@ test('stopping the browser gateway aborts an in-flight public readiness request 
   assert.equal(live.publicAddress, null);
 });
 
-test('browser authentication listener requires its scoped token and verifies local browser accounts', async (t) => {
+test('the game identity bridge admits names without accounts and cannot be used as a password verifier', async (t) => {
   const state = await fixture(t);
   await state.setup();
   const record = state.row();
-  const live = { children: [], http: [] as HttpServer[], sockets: new Set<net.Socket>(), publicAddress: null, stopping: false };
-  const listenerHost = state.service as unknown as { authListener(id: string, configuration: unknown, runtime: unknown): Promise<void> };
-  await listenerHost.authListener(serverId, record, live);
-  t.after(() => { live.stopping = true; for (const listener of live.http) { listener.closeAllConnections(); listener.close(); } });
-  const password = 'correct-browser-password';
-  const account = await state.service.accounts.create(serverId, { name: 'Alex', password });
-  const endpoint = `http://127.0.0.1:${record.authPort}/verify`;
-  const verify = (authorization?: string, candidate = password) => fetch(endpoint, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: {
-    'content-type': 'application/json', ...(authorization ? { authorization } : {}),
-  }, body: JSON.stringify({ name: account.name, password: candidate }) });
-  assert.equal((await verify()).status, 403);
-  assert.equal((await verify('Bearer incorrect-token')).status, 403);
-  assert.equal((await verify(`Bearer ${record.bridgeToken}`, 'wrong-browser-password')).status, 403);
-  const accepted = await verify(`Bearer ${record.bridgeToken}`);
-  assert.equal(accepted.status, 200);
-  assert.deepEqual(await accepted.json(), { ok: true, name: account.name, uuid: account.uuid });
-  await writeFile(path.join(state.serverRoot, 'usercache.json'), JSON.stringify([{ name: account.name, uuid: account.uuid }]));
-  assert.equal((await verify(`Bearer ${record.bridgeToken}`)).status, 200, 'The browser account must be able to reconnect after Minecraft caches its identity');
-  await writeFile(path.join(state.serverRoot, 'usercache.json'), JSON.stringify([{ name: account.name, uuid: '22222222-2222-4222-8222-222222222222' }]));
-  assert.equal((await verify(`Bearer ${record.bridgeToken}`)).status, 403, 'A conflicting Java identity must block the browser name');
-  await unlink(path.join(state.serverRoot, 'usercache.json'));
-  state.service.accounts.revoke(serverId, account.id);
-  assert.equal((await verify(`Bearer ${record.bridgeToken}`)).status, 403);
-});
-
-test('open browser login requires a scoped local token and the persisted open setting, and preserves identities', async (t) => {
-  const state = await fixture(t);
-  await state.setup();
-  assert.equal((await state.service.status(serverId)).requirePassword, true);
-  const record = state.row();
+  // Simulate a stored v0.1.30 gateway that previously required passwords.
+  record.requirePassword = true;
+  state.saveRow(record);
   const live = { children: [], http: [] as HttpServer[], sockets: new Set<net.Socket>(), publicAddress: null, stopping: false };
   const internals = state.service as unknown as { authListener(id: string, configuration: unknown, runtime: unknown): Promise<void> };
   await internals.authListener(serverId, record, live);
-  t.after(() => { live.stopping = true; for (const listener of live.http) { listener.closeAllConnections(); listener.close(); } });
-  const endpoint = `http://127.0.0.1:${record.authPort}/open`;
-  const login = (name = 'Alex', token = record.bridgeToken) => fetch(endpoint, { method: 'POST', headers: {
-    'content-type': 'application/json', authorization: `Bearer ${token}`,
-  }, body: JSON.stringify({ name }), signal: AbortSignal.timeout(10_000) });
-  assert.equal((await login()).status, 403);
-  const account = await state.service.accounts.create(serverId, { name: 'Alex', password: '1234' });
-  const originalProperties = await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8');
-  await state.service.updateSettings(serverId, false);
-  while (state.service.isBusy(serverId)) await delay(10);
+  t.after(() => {
+    live.stopping = true;
+    for (const listener of live.http) {
+      listener.closeAllConnections();
+      listener.close();
+    }
+  });
+
+  const post = (endpoint: string, name: string, token: string) => fetch(`http://127.0.0.1:${record.authPort}${endpoint}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  assert.equal((await post('/open', 'Alex', 'untrusted')).status, 403);
+  assert.ok((await post('/verify', 'Alex', record.bridgeToken)).status >= 400);
   assert.equal((await state.service.status(serverId)).requirePassword, false);
-  const config = JSON.parse(await readFile(path.join(state.installed.directory, 'plugins/nodepilot-browser-auth/config.json'), 'utf8'));
-  assert.equal(config.requirePassword, false);
-  assert.equal(await readFile(path.join(state.serverRoot, 'server.properties'), 'utf8'), originalProperties);
-  assert.equal((await login('Alex', 'incorrect-token')).status, 403);
-  assert.deepEqual(await (await login()).json(), { ok: true, name: account.name, uuid: account.uuid });
-  assert.deepEqual(await (await login('NP_ALEX')).json(), { ok: true, name: account.name, uuid: account.uuid });
-  state.service.accounts.revoke(serverId, account.id);
-  assert.equal((await login()).status, 403);
-  await state.service.updateSettings(serverId, true);
-  while (state.service.isBusy(serverId)) await delay(10);
-  assert.equal((await login('Guest')).status, 403, 'An old listener must honor the new persisted setting');
-  state.setActive(true);
-  await assert.rejects(state.service.updateSettings(serverId, false), { code: 'server_active' });
+  const accepted = await post('/open', 'Alex', record.bridgeToken);
+  assert.equal(accepted.status, 200);
+  const identity = await accepted.json() as { name: string; uuid: string; ok: boolean };
+  assert.equal(identity.ok, true);
+  assert.equal(identity.name, 'Alex');
+  assert.match(identity.uuid, /^[a-f0-9-]{36}$/);
+  await writeFile(path.join(state.serverRoot, 'usercache.json'), JSON.stringify([{ name: identity.name, uuid: identity.uuid }]));
+  assert.deepEqual(await (await post('/open', 'ALEX', record.bridgeToken)).json(), identity);
+  await writeFile(path.join(state.serverRoot, 'usercache.json'), JSON.stringify([{ name: 'JavaPlayer', uuid: '55555555-5555-4555-8555-555555555555' }]));
+  assert.equal((await post('/open', 'JavaPlayer', record.bridgeToken)).status, 409);
+  await writeFile(path.join(state.serverRoot, 'ops.json'), JSON.stringify([{ name: identity.name, uuid: identity.uuid }]));
+  assert.equal((await post('/open', identity.name, record.bridgeToken)).status, 409);
 });

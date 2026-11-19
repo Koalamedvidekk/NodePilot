@@ -1,6 +1,7 @@
 // Run against a configured test server with Node.js 22+ after the server build.
 // NODEPILOT_BROWSER_TEST_CONFIG names a private JSON file with publicAddress,
-// name, password, expectedUuid, serverPort, backendPort and backendProtocol.
+// name, serverPort, backendPort and backendProtocol. Set expectedName and
+// expectedUuid to verify a migrated player's original identity.
 // Set clientProtocol: 777 to exercise EaglerX v5 / Minecraft 26.3; default is 1.8.
 // Credentials and authentication packets are never printed.
 import assert from 'node:assert/strict';
@@ -13,11 +14,10 @@ assert.ok(process.env.NODEPILOT_BROWSER_TEST_CONFIG, 'Set NODEPILOT_BROWSER_TEST
 assert.equal(typeof WebSocket, 'function', 'This integration test requires Node.js 22+.');
 const fixture = JSON.parse(await readFile(process.env.NODEPILOT_BROWSER_TEST_CONFIG, 'utf8'));
 assert.match(fixture.publicAddress, /^wss?:\/\//);
-assert.match(fixture.name, /^(?:np_)?[A-Za-z0-9_]{1,13}$/i);
-assert.match(fixture.expectedUuid, /^[a-f0-9-]{36}$/i);
+assert.match(fixture.name, /^[A-Za-z0-9_]{1,16}$/);
+if (fixture.expectedUuid) assert.match(fixture.expectedUuid, /^[a-f0-9-]{36}$/i);
 for (const key of ['serverPort', 'backendPort', 'backendProtocol']) assert.ok(Number.isInteger(fixture[key]) && fixture[key] > 0 && fixture[key] <= 65535, 'Invalid test endpoint.');
 const modern = fixture.clientProtocol === 777;
-const requirePassword = fixture.requirePassword !== false;
 assert.ok(fixture.clientProtocol === undefined || [47,777].includes(fixture.clientProtocol), 'Only the verified 1.8 and 26.3 test codecs are available.');
 
 function short(value) {
@@ -31,7 +31,7 @@ function text(value) {
   return Buffer.concat([Buffer.from([bytes.length]), bytes]);
 }
 
-async function browserLogin(password, expectWorld) {
+async function browserLogin() {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(fixture.publicAddress);
     socket.binaryType = 'arraybuffer';
@@ -55,7 +55,7 @@ async function browserLogin(password, expectWorld) {
     }
     socket.onopen = () => socket.send(Buffer.concat([
       Buffer.from([1, 2]), short(1), short(modern ? 5 : 3), short(1), short(modern ? 777 : 47),
-      text('NodePilotTest'), text('1.0'), Buffer.from([requirePassword ? 1 : 0]), text(fixture.name),
+      text('NodePilotTest'), text('1.0'), Buffer.from([0]), text(fixture.name),
     ]));
     socket.onerror = () => finish(new Error('The public game WebSocket failed.'));
     socket.onclose = () => { if (!settled) finish(new Error('The game connection closed before the test completed.')); };
@@ -68,19 +68,20 @@ async function browserLogin(password, expectWorld) {
               assert.equal(packet.readUInt16BE(1), modern ? 5 : 3);
               assert.equal(packet.readUInt16BE(3), modern ? 777 : 47);
               { const versionOffset = 6 + packet[5];
-                assert.equal(packet[versionOffset + 1 + packet[versionOffset]], requirePassword ? 255 : 0, 'The gateway must advertise the selected authentication mode.'); }
-              socket.send(Buffer.concat([Buffer.from([4]), text(fixture.name), text('default'), text(requirePassword ? password : ''), ...(modern ? [Buffer.from([0,0,0,0])] : [])]));
+                assert.equal(packet[versionOffset + 1 + packet[versionOffset]], 0, 'The gateway must advertise a password-free handshake.'); }
+              socket.send(Buffer.concat([Buffer.from([4]), text(fixture.name), text('default'), text(''), ...(modern ? [Buffer.from([0,0,0,0])] : [])]));
               break;
             case 5: {
               const offset = 2 + packet[1];
+              assert.equal(packet.toString('ascii', 2, offset), fixture.expectedName ?? fixture.name);
               uuid = packet.subarray(offset, offset + 16).toString('hex');
-              assert.equal(uuid, fixture.expectedUuid.replaceAll('-', '').toLowerCase(), 'The browser profile must use its stored NodePilot UUID.');
+              assert.match(uuid, /^[a-f0-9]{32}$/);
+              if (fixture.expectedUuid) assert.equal(uuid, fixture.expectedUuid.replaceAll('-', '').toLowerCase(), 'The returning player must retain their original UUID.');
               socket.send(Buffer.from([8]));
               break;
             }
             case 9:
               playing = true;
-              if (!expectWorld) finish(null, { allowed: true, uuid });
               break;
             case 6:
             case 255:
@@ -185,17 +186,13 @@ async function nativeLogin(port, protocol) {
 }
 
 await delay(1500);
-if (requirePassword) {
-  assert.equal((await browserLogin('incorrect-test-password', false)).allowed, false);
-  console.log('PASS incorrect browser password denied');
-}
-await delay(1500);
-const first = await browserLogin(fixture.password, true);
+const first = await browserLogin();
 assert.equal(first.allowed, true);
 await delay(2000);
-const second = await browserLogin(fixture.password, true);
+const second = await browserLogin();
+assert.equal(second.allowed, true);
 assert.equal(second.uuid, first.uuid);
-console.log('PASS actual WSS '+(modern ? '26.3 protocol-v5' : '1.8')+' authentication, world chunks, position/movement packets, and stable-UUID reconnect');
+console.log('PASS password-free WSS '+(modern ? '26.3 protocol-v5' : '1.8')+' login, world chunks, position/movement packets, and stable-UUID reconnect');
 await delay(1500);
 assert.equal(await nativeLogin(fixture.serverPort, modern ? 777 : 47), 1);
 console.log('PASS ordinary Java login retains its online authentication challenge');
